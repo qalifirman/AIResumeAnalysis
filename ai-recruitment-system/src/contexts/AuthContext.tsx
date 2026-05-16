@@ -11,9 +11,10 @@ interface AuthContextType {
   accessToken: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string, name: string, role: 'hr' | 'applicant') => Promise<void>;
+  signup: (email: string, password: string, name: string, role: 'hr' | 'applicant', inviteCode?: string) => Promise<{ verificationRequired?: boolean }>;
   logout: () => Promise<void>;
-  refreshProfile: () => Promise<void>;
+  refreshProfile: (updatedUser?: User) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -66,9 +67,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signup = async (email: string, password: string, name: string, role: 'hr' | 'applicant') => {
-    await apiSignup(email, password, name, role, publicAnonKey);
-    await login(email, password);
+  const signup = async (email: string, password: string, name: string, role: 'hr' | 'applicant', inviteCode?: string) => {
+    const result = await apiSignup(email, password, name, role, publicAnonKey, inviteCode);
+    if (!result.verificationRequired) await login(email, password);
+    return result;
   };
 
   const logout = async () => {
@@ -77,12 +79,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAccessToken(null);
   };
 
-  const refreshProfile = async () => {
+  const refreshProfile = async (updatedUser?: User) => {
+    if (updatedUser) { setUser(updatedUser); return; }
     if (accessToken) await fetchProfile(accessToken);
   };
 
+  const resetPassword = async (email: string) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}`,
+    });
+    if (error) throw new Error(error.message);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, accessToken, loading, login, signup, logout, refreshProfile }}>
+    <AuthContext.Provider value={{ user, accessToken, loading, login, signup, logout, refreshProfile, resetPassword }}>
       {children}
     </AuthContext.Provider>
   );

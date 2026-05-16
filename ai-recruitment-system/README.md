@@ -1,157 +1,98 @@
-# RecruitAI — AI-Powered Recruitment System
+# RecruitAI - AI-Powered Recruitment System
 
-Full-stack recruitment platform with semantic AI matching.
-Built with React + TypeScript + Supabase + Python (sentence-transformers).
+Full-stack recruitment platform built with React, TypeScript, Supabase, and Supabase Edge Functions.
 
----
+The production scoring path is handled by the Edge Function. It uses configured LLM providers first, then records when it falls back to deterministic rule-based scoring. The Python `ai-service/` is kept as an optional experimental semantic matching service, not the active application scoring path.
 
-## Project structure
+## Project Structure
 
-```
-├── src/
-│   ├── api/            ← All fetch calls (one layer, never in components)
-│   ├── types/          ← Shared TypeScript interfaces
-│   ├── components/
-│   │   ├── auth/       ← LoginPage
-│   │   ├── layout/     ← Sidebar
-│   │   ├── hr/         ← HRDashboard, JobManagement, CandidateReview, Analytics
-│   │   └── applicant/  ← ApplicantDashboard, JobRecommendations, ResumeManager…
-│   ├── contexts/       ← AuthContext (Supabase auth)
-│   └── utils/
-│       ├── ai/         ← nlp-engine.ts (client-side fallback matching)
-│       └── supabase/   ← info.tsx (env vars)
-├── supabase/
-│   ├── functions/server/   ← Deno edge function (Hono)
-│   └── migrations/         ← PostgreSQL schema
-└── ai-service/         ← Python FastAPI (sentence-transformers AI scoring)
+```text
+src/
+  api/                  Frontend API layer
+  components/           Auth, HR, applicant, layout, and UI components
+  contexts/             Auth and theme context
+  types/                Shared TypeScript interfaces
+  utils/                PDF parsing, score cache, Supabase config
+supabase/
+  functions/server/     Hono Edge Function API
+  migrations/           PostgreSQL, RLS, and storage schema
+ai-service/             Optional Python semantic matching prototype
 ```
 
----
+## Environment
 
-## 1. Supabase Cloud Setup
+Frontend `.env.local`:
 
-### Create the project
-1. Go to **https://supabase.com** → New project
-2. Choose region: **Southeast Asia (Singapore)**
-3. Save your database password
-
-### Run the database migration
-1. Dashboard → **SQL Editor**
-2. Paste the contents of `supabase/migrations/20260111052924_init_schema.sql`
-3. Click **Run**
-
-### Get your API keys
-Dashboard → **Settings → API**
-- Copy **Project URL** → `VITE_SUPABASE_URL`
-- Copy **anon public key** → `VITE_SUPABASE_ANON_KEY`
-
-### Create `.env.local`
 ```env
 VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 VITE_SUPABASE_ANON_KEY=your_anon_public_key_here
 ```
 
-### Deploy the edge function
-```bash
-npm install -g supabase
-supabase login
-supabase link --project-ref YOUR_PROJECT_REF
-supabase functions deploy server
+Supabase Edge Function secrets:
+
+```env
+SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+SUPABASE_ANON_KEY=your_anon_public_key_here
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+SITE_URL=https://your-deployed-site.example
+CORS_ORIGINS=https://your-deployed-site.example,http://localhost:5173
+HR_SIGNUP_INVITE_CODE=choose-a-private-invite-code
+GEMINI_API_KEY=optional
+GROQ_API_KEY=optional
+ANTHROPIC_API_KEY=optional
+ENABLE_CLAUDE_FALLBACK=false
+RESEND_API_KEY=optional
+FROM_EMAIL=noreply@your-domain.example
 ```
 
-Then in **Dashboard → Edge Functions → server → Secrets**, add:
-```
-AI_SERVICE_URL = https://your-ai-service.onrender.com   # (after deploying AI service)
-```
+At least one AI provider key is recommended for real AI scoring. If none are configured, the app will use rule-based fallback scoring and mark results as fallback.
 
----
-
-## 2. Run the frontend
+## Setup
 
 ```bash
 npm install
+npm run type-check
+npm run build
 npm run dev
 ```
 
-Open http://localhost:3000
+Deploy Supabase:
 
----
+```bash
+supabase login
+supabase link --project-ref YOUR_PROJECT_REF
+supabase db push
+supabase functions deploy server
+```
 
-## 3. AI Service Setup
+## Security Notes
 
-The Python service uses `sentence-transformers/all-MiniLM-L6-v2` —
-a model trained on 1 billion+ sentence pairs that understands semantic
-meaning (e.g. "React developer" ≈ "frontend engineer").
+- Resume storage is private. The API returns short-lived signed URLs.
+- Application scoring is canonical server-side: the backend fetches the real job and the applicant resume snapshot.
+- HR signup requires `HR_SIGNUP_INVITE_CODE`.
+- Application status updates are validated server-side.
+- HR notes are stored in `candidate_notes` and are not returned to applicants.
+- Profile reads are restricted by RLS to self or valid application counterparties.
 
-### Run locally
+## How Matching Works
+
+When an applicant applies:
+
+```text
+Browser -> POST /applications with jobId and resumeId
+Edge Function -> fetches canonical job and resume from Supabase
+Edge Function -> scores with Gemini, Groq, or Claude if configured
+Edge Function -> falls back to deterministic scoring if providers fail
+Edge Function -> stores score, explanation, provider, fallback flag, and resume snapshot
+PostgreSQL -> stores application record for HR review
+```
+
+The optional Python service in `ai-service/` can still be run for experimentation:
+
 ```bash
 cd ai-service
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-Test: http://localhost:8000/health
-
-### Deploy to Render.com (free tier)
-1. Push `ai-service/` to a GitHub repo
-2. Go to **https://render.com** → New Web Service
-3. Connect the repo, set:
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `uvicorn main:app --host 0.0.0.0 --port 8000`
-   - **Instance type**: Free
-4. Copy the deployed URL (e.g. `https://recruitai-ai.onrender.com`)
-5. Add it as `AI_SERVICE_URL` secret in your Supabase edge function
-
-### Deploy to HuggingFace Spaces (free)
-1. Create a new Space at huggingface.co → SDK: **Docker**
-2. Upload the contents of `ai-service/`
-3. The Space URL becomes your `AI_SERVICE_URL`
-
----
-
-## 4. How the AI matching works
-
-When an applicant clicks **Apply**:
-
-```
-Browser                  Edge Function              AI Service (Python)
-  │                            │                           │
-  ├─ POST /applications ──────►│                           │
-  │  (resume text,             │                           │
-  │   job description,         ├─ POST /score ────────────►│
-  │   skills, etc.)            │  (resume + job text)      │  sentence-transformer
-  │                            │◄─ match_score ────────────┤  cosine similarity
-  │                            │   skill_match             │
-  │                            │   explanation             │
-  │                            │                           │
-  │                            ├─ INSERT applications ─────► PostgreSQL
-  │◄── { application } ────────┤
-```
-
-If the AI service is unavailable, the edge function falls back to
-basic keyword overlap scoring automatically.
-
-### Model details (for your FYP presentation)
-- **Model**: `sentence-transformers/all-MiniLM-L6-v2`
-- **Architecture**: 6-layer MiniLM transformer, 22M parameters
-- **Training data**: SNLI, MultiNLI, MS MARCO, Wikipedia QA (1B+ pairs)
-- **Output**: 384-dimensional sentence embeddings
-- **Scoring**: Cosine similarity between resume and job description embeddings
-
----
-
-## 5. Useful commands
-
-```bash
-# Frontend dev
-npm run dev
-
-# Type check
-npx tsc --noEmit
-
-# Deploy edge function
-npm run deploy-functions
-
-# AI service (local)
-cd ai-service && uvicorn main:app --reload
-```
+It is not currently called by the Edge Function.

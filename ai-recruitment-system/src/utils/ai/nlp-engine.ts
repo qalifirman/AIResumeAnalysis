@@ -47,6 +47,18 @@ export const SKILL_DATABASE = [
   // Security
   'Cybersecurity', 'Penetration Testing', 'Ethical Hacking', 'OAuth', 'JWT', 'Encryption',
   'SSL/TLS', 'OWASP', 'Security Auditing',
+
+  // Physical Security & Guarding
+  'Security Guard', 'Access Control', 'Patrol', 'Incident Reporting', 'CCTV Monitoring',
+  'Visitor Management', 'Crowd Control', 'Emergency Response', 'Loss Prevention',
+  'Static Guarding', 'Site Security', 'Fire Safety', 'First Aid', 'Radio Communication',
+  'Risk Assessment', 'Security SOP', 'Perimeter Check',
+
+  // Medical & Healthcare
+  'Patient Care', 'Triage', 'Clinical Assessment', 'Medication Administration',
+  'Wound Care', 'Vital Signs', 'Emergency Medicine', 'Surgery', 'Nursing',
+  'Medical Records', 'Infection Control', 'Phlebotomy', 'Patient Safety',
+  'Diagnosis', 'Treatment Planning', 'Operating Theatre', 'ICU', 'Ward Management',
   
   // Business & Analytics
   'Business Analysis', 'Product Management', 'Project Management', 'Data Analysis',
@@ -337,11 +349,11 @@ export function calculateMatch(
 function generateExplanation(
   matchScore: number,
   skillMatch: number,
-  matchedSkills: string[],
-  missingSkills: string[],
+  _matchedSkills: string[],
+  _missingSkills: string[],
   experienceScore: number,
-  resumeYears: number,
-  requiredYears: number
+  _resumeYears: number,
+  _requiredYears: number
 ): string {
   const percentage = Math.round(matchScore * 100);
   
@@ -368,62 +380,171 @@ function generateExplanation(
   return explanation;
 }
 
-/**
- * Parse resume text (Unchanged)
- */
+// ─── Structured parsers ───────────────────────────────────────────────────────
+
+import type { WorkHistoryEntry, EducationEntry } from '../../types';
+
+function extractWorkHistory(resumeText: string): WorkHistoryEntry[] {
+  // Isolate experience section when present
+  let section = resumeText;
+  const expMatch = resumeText.match(
+    /(?:EXPERIENCE|WORK HISTORY|EMPLOYMENT HISTORY|PROFESSIONAL EXPERIENCE)[:\s\n]+([\s\S]*?)(?=\n(?:EDUCATION|PROJECTS|SKILLS|CERTIFICATIONS|ACHIEVEMENTS|REFERENCES|ACTIVITIES)\b)/i
+  );
+  if (expMatch) section = expMatch[1];
+
+  const lines = section.split('\n').map(l => l.trim());
+  const entries: WorkHistoryEntry[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Match date ranges like "2021 - Present", "Jan 2020 – 2023", etc.
+    const dateMatch = line.match(/(\d{4})\s*[-–—]\s*(\d{4}|present|current)/i);
+    if (!dateMatch) continue;
+
+    const period = dateMatch[0];
+
+    // Collect non-empty lines before the date line (skip bullet/separator lines)
+    const context: string[] = [];
+    for (let j = i - 1; j >= Math.max(0, i - 4); j--) {
+      const prev = lines[j];
+      if (!prev || /^[-•*|]/.test(prev) || /^\d{4}/.test(prev)) break;
+      context.unshift(prev);
+    }
+
+    // Non-date part on the same line (e.g. "Company Sdn Bhd | 2021 – 2023")
+    const sameLinePart = line.replace(dateMatch[0], '').replace(/[|\-–—]/g, '').trim();
+
+    if (context.length >= 2) {
+      entries.push({ title: context[0], company: context[1], period });
+    } else if (context.length === 1) {
+      entries.push({ title: context[0], company: sameLinePart || '', period });
+    } else if (sameLinePart) {
+      entries.push({ title: sameLinePart, company: '', period });
+    }
+  }
+
+  return entries.slice(0, 6);
+}
+
+function extractStructuredEducation(resumeText: string): EducationEntry[] {
+  // Isolate education section when present
+  let section = resumeText;
+  const eduMatch = resumeText.match(
+    /(?:EDUCATION|ACADEMIC BACKGROUND|QUALIFICATIONS?)[:\s\n]+([\s\S]*?)(?=\n(?:EXPERIENCE|WORK|EMPLOYMENT|PROJECTS|SKILLS|CERTIFICATIONS|ACHIEVEMENTS)\b)/i
+  );
+  if (eduMatch) section = eduMatch[1];
+
+  const lines = section.split('\n').map(l => l.trim()).filter(Boolean);
+  const entries: EducationEntry[] = [];
+
+  const degreeKeywords = [
+    'bachelor', 'master', 'phd', 'doctorate', 'diploma', 'degree',
+    'b.s.', 'm.s.', 'b.a.', 'm.a.', 'mba', 'b.eng', 'm.eng', 'b.sc', 'm.sc',
+    'stpm', 'spm', 'certificate', 'honours', 'hons',
+  ];
+  const institutionKeywords = [
+    'university', 'universiti', 'college', 'kolej', 'institute', 'institut',
+    'school', 'academy', 'akademi', 'polytechnic', 'politeknik',
+    'uitm', 'utm', 'upm', ' um ', 'uum', 'utem', 'uthm', 'unimas', 'unimap',
+    'technology', 'teknologi',
+  ];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lower = line.toLowerCase();
+
+    const hasDegree = degreeKeywords.some(k => lower.includes(k));
+    const hasInst   = institutionKeywords.some(k => lower.includes(k));
+    if (!hasDegree && !hasInst) continue;
+
+    let degree      = hasDegree ? line : '';
+    let institution = hasInst   ? line : '';
+
+    // Look at next line for the missing piece
+    if (hasDegree && !institution) {
+      const next = lines[i + 1] || '';
+      const nextLower = next.toLowerCase();
+      if (institutionKeywords.some(k => nextLower.includes(k))) {
+        institution = next;
+      } else if (next && !/^[-•*]/.test(next) && !/^\d{4}/.test(next)) {
+        institution = next; // best-guess: next non-bullet, non-date line is the school
+      }
+    }
+    if (hasInst && !degree) {
+      const prev = lines[i - 1] || '';
+      if (degreeKeywords.some(k => prev.toLowerCase().includes(k))) degree = prev;
+    }
+
+    // Extract year range
+    const yearMatch = (line + ' ' + (lines[i + 1] || '') + ' ' + (lines[i + 2] || ''))
+      .match(/\d{4}\s*[-–—]\s*(?:\d{4}|present|current)/i);
+
+    if (degree || institution) {
+      const isDup = entries.some(e => e.degree === degree && e.institution === institution);
+      if (!isDup) entries.push({ degree, institution, year: yearMatch?.[0] });
+    }
+  }
+
+  return entries.slice(0, 4);
+}
+
+// ─── Public parse API ─────────────────────────────────────────────────────────
+
 export interface ParsedResume {
   skills: string[];
   yearsOfExperience: number;
-  education: string[];
+  education: string[];          // legacy flat list (kept for compat)
+  workHistory: WorkHistoryEntry[];
+  structuredEducation: EducationEntry[];
   rawText: string;
 }
 
 export function parseResume(resumeText: string): ParsedResume {
   const skills = extractSkills(resumeText);
-  
+
+  // ── Years of experience ──────────────────────────────────────────────────
   let yearsOfExperience = 0;
   const yearMatches = resumeText.match(/(\d+)\+?\s*(years?|yrs?)\s*(of\s*)?(experience|exp)/gi);
   if (yearMatches) {
-    const years = yearMatches.map(match => {
-      const num = match.match(/\d+/);
-      return num ? parseInt(num[0]) : 0;
-    });
+    const years = yearMatches.map(m => parseInt(m.match(/\d+/)?.[0] || '0'));
     yearsOfExperience = Math.max(...years);
   }
-  
+
   if (yearsOfExperience === 0) {
-    const dateRanges = resumeText.match(/(\d{4})\s*-\s*(\d{4}|present|current)/gi);
+    let expSection = resumeText;
+    const expMatch = resumeText.match(/(?:EXPERIENCE|WORK HISTORY|EMPLOYMENT)[\s\S]*?(?=(?:EDUCATION|PROJECTS|SKILLS|CERTIFICATIONS|ACHIEVEMENTS)\b)/i);
+    if (expMatch) expSection = expMatch[0];
+
+    const dateRanges = expSection.match(/(\d{4})\s*[-–—]\s*(\d{4}|present|current)/gi);
     if (dateRanges) {
       let totalYears = 0;
       const currentYear = new Date().getFullYear();
-      
       for (const range of dateRanges) {
-        const years = range.match(/\d{4}/g);
-        if (years && years.length >= 1) {
-          const startYear = parseInt(years[0]);
-          const endYear = years[1] ? parseInt(years[1]) : currentYear;
-          totalYears += Math.max(0, endYear - startYear);
+        const yrs = range.match(/\d{4}/g);
+        if (yrs) {
+          const start = parseInt(yrs[0]);
+          const end   = yrs[1] ? parseInt(yrs[1]) : currentYear;
+          totalYears += Math.max(0, end - start);
         }
       }
       yearsOfExperience = totalYears;
     }
   }
-  
-  const education: string[] = [];
+
+  // ── Legacy flat education (kept for older saved resumes) ─────────────────
   const educationKeywords = ['bachelor', 'master', 'phd', 'doctorate', 'diploma', 'degree', 'b.s.', 'm.s.', 'b.a.', 'm.a.', 'mba'];
-  const lines = resumeText.split('\n');
-  
-  for (const line of lines) {
-    const lowerLine = line.toLowerCase();
-    if (educationKeywords.some(keyword => lowerLine.includes(keyword))) {
-      education.push(line.trim());
-    }
+  const legacyEducation: string[] = [];
+  for (const line of resumeText.split('\n')) {
+    const lower = line.toLowerCase();
+    if (educationKeywords.some(k => lower.includes(k))) legacyEducation.push(line.trim());
   }
-  
+
   return {
     skills,
     yearsOfExperience,
-    education: education.slice(0, 5),
-    rawText: resumeText
+    education: legacyEducation.slice(0, 5),
+    workHistory: extractWorkHistory(resumeText),
+    structuredEducation: extractStructuredEducation(resumeText),
+    rawText: resumeText,
   };
 }

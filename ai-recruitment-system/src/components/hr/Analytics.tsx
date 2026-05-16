@@ -37,6 +37,16 @@ export function Analytics() {
     .filter(([, v]) => v > 0)
     .map(([k, v]) => ({ name: k.replace('_', ' '), value: v }));
 
+  const applicationsChartData = (() => {
+    const sorted = [...data.applicationsPerJob].sort((a, b) => b.count - a.count);
+    const visible = sorted.slice(0, 8);
+    const hidden = sorted.slice(8);
+    const otherCount = hidden.reduce((sum, item) => sum + item.count, 0);
+    return otherCount > 0
+      ? [...visible, { jobId: 'other', jobTitle: `Other ${hidden.length} jobs`, count: otherCount }]
+      : visible;
+  })();
+
   const CustomTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null;
     return (
@@ -71,11 +81,16 @@ export function Analytics() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Applications per job */}
-        {data.applicationsPerJob.length > 0 && (
+        {applicationsChartData.length > 0 && (
           <div className="card-dark p-5">
-            <h3 className="text-sm font-semibold text-white mb-4">Applications per job</h3>
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-white">Applications per job</h3>
+              <p className="text-xs text-text-muted mt-1">
+                {data.applicationsPerJob.length > 8 ? `Top 8 shown, ${data.applicationsPerJob.length - 8} grouped as Other.` : 'All active jobs shown.'}
+              </p>
+            </div>
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={data.applicationsPerJob} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+              <BarChart data={applicationsChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <XAxis dataKey="jobTitle" tick={{ fill: '#93adc8', fontSize: 11 }} axisLine={false} tickLine={false}
                   tickFormatter={v => v.length > 12 ? v.slice(0, 12) + '…' : v} />
                 <YAxis tick={{ fill: '#93adc8', fontSize: 11 }} axisLine={false} tickLine={false} />
