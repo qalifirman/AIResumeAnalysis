@@ -4,7 +4,7 @@ import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from 'react-image-cr
 import 'react-image-crop/dist/ReactCrop.css';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { apiUpdateProfile, apiUploadAvatar } from '../../api';
+import { apiUpdateProfile, apiUploadAvatar, apiRemoveAvatar } from '../../api';
 
 const COMPANY_SIZES = ['1-10', '11-50', '51-200', '201-500', '501-1000', '1000+'];
 
@@ -21,6 +21,8 @@ export function CompanyProfile() {
   const [description, setDescription] = useState(user?.company_description || '');
   const [avatarPreview, setAvatarPreview] = useState<string | null>(user?.avatar_url ?? null);
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarRemoving, setAvatarRemoving] = useState(false);
+  const [avatarActionsOpen, setAvatarActionsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [cropSrc, setCropSrc] = useState<string | null>(null);
   const [crop, setCrop] = useState<Crop>();
@@ -65,6 +67,7 @@ export function CompanyProfile() {
     if (file.size > 5 * 1024 * 1024) { toast.error('Image must be under 5 MB.'); return; }
     setCropSrc(URL.createObjectURL(file));
     setPendingFile(file);
+    setAvatarActionsOpen(false);
     if (avatarInputRef.current) avatarInputRef.current.value = '';
   };
 
@@ -100,10 +103,67 @@ export function CompanyProfile() {
     }, 'image/jpeg', 0.92);
   };
 
+  const handleRemoveLogo = async () => {
+    if (!accessToken || !avatarPreview) return;
+    const previousAvatar = avatarPreview;
+    setAvatarRemoving(true);
+    setAvatarActionsOpen(false);
+    setAvatarPreview(null);
+    try {
+      await apiRemoveAvatar(accessToken);
+      await refreshProfile();
+      toast.success('Company logo removed.');
+    } catch (err: any) {
+      setAvatarPreview(previousAvatar);
+      toast.error(err.message || 'Failed to remove logo.');
+    } finally {
+      setAvatarRemoving(false);
+    }
+  };
+
   const initials = (companyName || user?.name || 'C').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
 
   return (
     <form onSubmit={handleSave} className="flex flex-col gap-6 max-w-[900px] mx-auto pb-8">
+      {avatarActionsOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-surface-dark border border-border-dark rounded-2xl p-6 w-full max-w-sm shadow-card">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-white font-bold text-lg">Company Logo</h3>
+              <button type="button" onClick={() => setAvatarActionsOpen(false)}
+                className="size-8 rounded-lg text-text-muted hover:text-white hover:bg-surface-hover transition-colors">
+                <span className="material-symbols-outlined ms-sm">close</span>
+              </button>
+            </div>
+            <div className="flex justify-center mb-5">
+              {avatarPreview ? (
+                <img src={avatarPreview} alt="Company logo" className="size-24 rounded-xl object-cover border border-border-dark shadow-lg" />
+              ) : (
+                <div className="size-24 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-2xl font-black text-primary shadow-lg">
+                  {initials}
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col gap-2">
+              <button type="button" onClick={() => { setAvatarActionsOpen(false); avatarInputRef.current?.click(); }} disabled={avatarUploading || avatarRemoving}
+                className="h-11 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined ms-sm">add_a_photo</span>
+                {avatarPreview ? 'Change Logo' : 'Upload Logo'}
+              </button>
+              {avatarPreview && (
+                <button type="button" onClick={handleRemoveLogo} disabled={avatarUploading || avatarRemoving}
+                  className="h-11 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/15 text-red-400 text-sm font-semibold transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+                  <span className={`material-symbols-outlined ms-sm ${avatarRemoving ? 'animate-spin' : ''}`}>
+                    {avatarRemoving ? 'refresh' : 'delete'}
+                  </span>
+                  Remove Logo
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Crop Modal */}
       {cropSrc && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -128,27 +188,29 @@ export function CompanyProfile() {
       <div className="bg-surface-card rounded-xl border border-border-dark overflow-hidden">
         <div className="p-6 flex flex-col md:flex-row gap-5 items-start md:items-end">
           <div className="relative flex-shrink-0">
-            {avatarPreview ? (
-              <img src={avatarPreview} alt="Company logo" className="size-24 rounded-xl object-cover border border-border-dark shadow-lg" />
-            ) : (
-              <div className="size-24 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-2xl font-black text-primary shadow-lg">
-                {initials}
-              </div>
-            )}
-            {avatarUploading && (
+            <button
+              type="button"
+              onClick={() => setAvatarActionsOpen(true)}
+              disabled={avatarUploading || avatarRemoving}
+              className="group relative block rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-surface-card disabled:opacity-70"
+              title="Edit company logo"
+            >
+              {avatarPreview ? (
+                <img src={avatarPreview} alt="Company logo" className="size-24 rounded-xl object-cover border border-border-dark shadow-lg" />
+              ) : (
+                <div className="size-24 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-2xl font-black text-primary shadow-lg">
+                  {initials}
+                </div>
+              )}
+              <span className="absolute inset-0 rounded-xl bg-black/0 group-hover:bg-black/35 transition-colors flex items-center justify-center">
+                <span className="material-symbols-outlined text-white opacity-0 group-hover:opacity-100 transition-opacity">edit</span>
+              </span>
+            </button>
+            {(avatarUploading || avatarRemoving) && (
               <div className="absolute inset-0 rounded-xl bg-black/50 flex items-center justify-center">
                 <span className="material-symbols-outlined text-white text-[28px] animate-spin">refresh</span>
               </div>
             )}
-            <button
-              type="button"
-              onClick={() => avatarInputRef.current?.click()}
-              disabled={avatarUploading}
-              className="absolute -bottom-2 -right-2 size-8 rounded-lg bg-primary hover:bg-primary-hover flex items-center justify-center text-white shadow-md transition-colors disabled:opacity-60"
-              title="Change company logo"
-            >
-              <span className="material-symbols-outlined text-[18px]">add_a_photo</span>
-            </button>
             <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={handleLogoChange} />
           </div>
 

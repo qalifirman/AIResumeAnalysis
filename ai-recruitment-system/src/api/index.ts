@@ -32,6 +32,14 @@ export async function apiUploadAvatar(token: string, file: File): Promise<{ avat
   return handle(res);
 }
 
+export async function apiRemoveAvatar(token: string): Promise<void> {
+  const res = await fetch(`${base}/user/avatar`, {
+    method: 'DELETE',
+    headers: headers(token),
+  });
+  await handle(res);
+}
+
 export async function apiGetProfile(token: string): Promise<User> {
   const res = await fetch(`${base}/user/profile`, { headers: headers(token) });
   const data = await handle<{ profile: User }>(res);
@@ -171,6 +179,8 @@ export async function apiParseResumeAI(token: string, rawText: string): Promise<
 export async function apiScoreJobMatch(
   token: string,
   payload: {
+    jobId: string;
+    resumeId?: string;
     jobTitle: string;
     resumeText: string;
     jobDescription: string;
@@ -178,6 +188,7 @@ export async function apiScoreJobMatch(
     requiredSkills: string[];
     resumeYearsExp: number;
     requiredYearsExp: number;
+    hypotheticalSkills?: string[];
   }
 ): Promise<{
   match_score: number;
@@ -267,8 +278,11 @@ export async function apiDeleteResume(token: string, id: string): Promise<void> 
 
 // ─── Applications ─────────────────────────────────────────────────────────────
 
-export async function apiGetApplications(token: string): Promise<Application[]> {
-  const res = await fetch(`${base}/applications`, { headers: headers(token) });
+export async function apiGetApplications(token: string, filters: { jobId?: string } = {}): Promise<Application[]> {
+  const params = new URLSearchParams();
+  if (filters.jobId) params.set('jobId', filters.jobId);
+  const qs = params.toString();
+  const res = await fetch(`${base}/applications${qs ? `?${qs}` : ''}`, { headers: headers(token) });
   const data = await handle<{ applications: Application[] }>(res);
   return data.applications || [];
 }

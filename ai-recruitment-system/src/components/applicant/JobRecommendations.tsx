@@ -41,6 +41,19 @@ function matchColors(pct: number) {
   return            { bg: 'bg-red-500/10',    text: 'text-red-400',    border: 'border-red-500/25' };
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += limit) {
+    const batch = items.slice(i, i + limit);
+    results.push(...await Promise.all(batch.map(mapper)));
+  }
+  return results;
+}
+
 /** "X days ago" label */
 function postedLabel(createdAt: string) {
   const d = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000);
@@ -122,7 +135,7 @@ export function JobRecommendations({ externalSearch = '' }: JobRecommendationsPr
       setApplied(new Set(appList.map(a => a.job_id)));
 
       const activeJobs = jobList.filter(j => j.status === 'active');
-      const matched: JobMatch[] = await Promise.all(activeJobs.map(async j => {
+      const matched: JobMatch[] = await mapWithConcurrency(activeJobs, 4, async j => {
         if (!resume?.parsed_data) {
           return { ...j, matchScore: 0, skillMatch: 0, textSimilarity: 0, matchedSkills: [], missingSkills: [], explanation: 'Upload a resume to see your match score.' };
         }
@@ -132,6 +145,8 @@ export function JobRecommendations({ externalSearch = '' }: JobRecommendationsPr
         }
         try {
           const r = await apiScoreJobMatch(accessToken, {
+            jobId: j.id,
+            resumeId: resume.id,
             jobTitle: j.title || '',
             resumeText: resume.parsed_data.rawText || '',
             jobDescription: j.description || '',
@@ -155,7 +170,7 @@ export function JobRecommendations({ externalSearch = '' }: JobRecommendationsPr
             isFallback: true,
           };
         }
-      }));
+      });
 
       matched.sort((a, b) => b.matchScore - a.matchScore);
 
@@ -624,13 +639,16 @@ function JobDetail({ job, applying, applied, saved, activeResume, onBack, onAppl
     setWhatIfLoading(true);
     setWhatIfError('');
     apiScoreJobMatch(accessToken, {
+      jobId: job.id,
+      resumeId: activeResume.id,
       jobTitle: job.title || '',
-      resumeText: `${activeResume.parsed_data.rawText || ''}\n\nHypothetical added skills: ${hypotheticalSkills.join(', ')}`,
+      resumeText: activeResume.parsed_data.rawText || '',
       jobDescription: job.description || '',
       resumeSkills: [...new Set([...(activeResume.parsed_data.skills || []), ...hypotheticalSkills])],
       requiredSkills: job.requirements || [],
       resumeYearsExp: activeResume.parsed_data.yearsOfExperience || 0,
       requiredYearsExp: job.required_years_exp || 0,
+      hypotheticalSkills,
     }).then(r => setWhatIfScore(Math.round(r.match_score * 100)))
       .catch((e: any) => setWhatIfError(e.message || 'AI what-if scoring failed.'))
       .finally(() => setWhatIfLoading(false));

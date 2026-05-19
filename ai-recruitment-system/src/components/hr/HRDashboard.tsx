@@ -25,17 +25,27 @@ const NAV_ITEMS = [
 export function HRDashboard() {
   const [activeTab, setActiveTab] = useState<HRTab>('dashboard');
   const [headerSearch, setHeaderSearch] = useState('');
+  const [selectedCandidateJobId, setSelectedCandidateJobId] = useState<string | null>(null);
   const { theme, toggleTheme } = useTheme();
+
+  const openCandidatesForJob = (jobId: string | null = null) => {
+    setSelectedCandidateJobId(jobId);
+    setHeaderSearch('');
+    setActiveTab('candidates');
+  };
 
   // When user types in header search, switch to candidates tab
   const handleHeaderSearch = (val: string) => {
     setHeaderSearch(val);
-    if (val && activeTab !== 'candidates') setActiveTab('candidates');
+    if (val && activeTab !== 'candidates') {
+      setSelectedCandidateJobId(null);
+      setActiveTab('candidates');
+    }
   };
 
   return (
     <div className="flex h-screen bg-bg-dark overflow-hidden">
-      <Sidebar activeTab={activeTab} onTabChange={t => { setActiveTab(t as HRTab); setHeaderSearch(''); }}
+      <Sidebar activeTab={activeTab} onTabChange={t => { setActiveTab(t as HRTab); setHeaderSearch(''); if (t === 'candidates') setSelectedCandidateJobId(null); }}
         navItems={NAV_ITEMS} portalLabel="Manager Portal" />
 
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -82,9 +92,15 @@ export function HRDashboard() {
 
         {/* Main content */}
         <main className="flex-1 overflow-y-auto p-6 lg:p-8 pb-20 md:pb-6">
-          {activeTab === 'dashboard'  && <HROverview onNavigate={setActiveTab} />}
-          {activeTab === 'jobs'       && <JobManagement />}
-          {activeTab === 'candidates' && <CandidateReview externalSearch={headerSearch} />}
+          {activeTab === 'dashboard'  && <HROverview onNavigate={setActiveTab} onOpenCandidates={openCandidatesForJob} />}
+          {activeTab === 'jobs'       && <JobManagement onReviewCandidates={openCandidatesForJob} />}
+          {activeTab === 'candidates' && (
+            <CandidateReview
+              externalSearch={headerSearch}
+              selectedJobId={selectedCandidateJobId}
+              onSelectedJobChange={setSelectedCandidateJobId}
+            />
+          )}
           {activeTab === 'analytics'  && <Analytics />}
           {activeTab === 'reports'    && <ReportGeneration />}
           {activeTab === 'profile'    && <CompanyProfile />}
@@ -96,7 +112,10 @@ export function HRDashboard() {
 
 // ─── HR Overview dashboard ────────────────────────────────────────────────────
 
-function HROverview({ onNavigate }: { onNavigate: (tab: HRTab) => void }) {
+function HROverview({ onNavigate, onOpenCandidates }: {
+  onNavigate: (tab: HRTab) => void;
+  onOpenCandidates: (jobId?: string | null) => void;
+}) {
   const { user, accessToken } = useAuth();
   const organizationName = user?.company_name || user?.name || 'there';
 
@@ -187,7 +206,7 @@ function HROverview({ onNavigate }: { onNavigate: (tab: HRTab) => void }) {
           <p className="text-sm text-text-muted mb-5">Where would you like to start?</p>
           <div className="space-y-3">
             {quickActions.map(c => (
-              <button key={c.tab} onClick={() => onNavigate(c.tab)}
+              <button key={c.tab} onClick={() => c.tab === 'candidates' ? onOpenCandidates(null) : onNavigate(c.tab)}
                 className="w-full flex items-center gap-4 p-4 rounded-xl bg-surface-hover/50 hover:bg-surface-hover border border-border-dark hover:border-primary/30 transition-all text-left group">
                 <div className={`size-12 rounded-xl ${c.bg} flex items-center justify-center flex-shrink-0`}>
                   <span className={`material-symbols-outlined ms-lg ${c.color}`}>{c.icon}</span>
@@ -231,7 +250,7 @@ function HROverview({ onNavigate }: { onNavigate: (tab: HRTab) => void }) {
             <h3 className="text-lg font-bold text-white">Recent Candidates</h3>
             <p className="text-xs text-text-muted mt-0.5">Top {Math.min(apps.length, 6)} by match score</p>
           </div>
-          <button onClick={() => onNavigate('candidates')}
+          <button onClick={() => onOpenCandidates(null)}
             className="flex items-center gap-1.5 text-sm font-medium text-primary hover:text-primary-hover transition-colors">
             View All <span className="material-symbols-outlined ms-sm">arrow_forward</span>
           </button>
@@ -287,7 +306,7 @@ function HROverview({ onNavigate }: { onNavigate: (tab: HRTab) => void }) {
                   <td className="px-5 py-3">{scoreBadge(app.match_score)}</td>
                   <td className="px-5 py-3"><StatusBadge s={app.status} /></td>
                   <td className="px-5 py-3 text-right">
-                    <button onClick={() => onNavigate('candidates')}
+                    <button onClick={() => onOpenCandidates(app.job_id)}
                       className="text-xs text-primary hover:underline font-medium">Review</button>
                   </td>
                 </tr>

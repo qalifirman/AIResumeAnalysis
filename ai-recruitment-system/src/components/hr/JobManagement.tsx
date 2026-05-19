@@ -27,7 +27,7 @@ Preferred experience:
 Working arrangement:
 - `;
 
-export function JobManagement() {
+export function JobManagement({ onReviewCandidates }: { onReviewCandidates?: (jobId: string) => void }) {
   const { accessToken, user } = useAuth();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
@@ -254,7 +254,7 @@ export function JobManagement() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 pb-12">
           {filtered.map(job => (
-            <JobCard key={job.id} job={job} appCount={appCounts[job.id] ?? 0} onEdit={openEdit} onDelete={id => setConfirmDelete(id)} onDuplicate={handleDuplicate} />
+            <JobCard key={job.id} job={job} appCount={appCounts[job.id] ?? 0} onEdit={openEdit} onDelete={id => setConfirmDelete(id)} onDuplicate={handleDuplicate} onReviewCandidates={onReviewCandidates} />
           ))}
           {/* Add new card */}
           <button onClick={openCreate}
@@ -534,7 +534,14 @@ export function JobManagement() {
   );
 }
 
-function JobCard({ job, appCount, onEdit, onDelete, onDuplicate }: { job: Job; appCount: number; onEdit: (j: Job) => void; onDelete: (id: string) => void; onDuplicate: (j: Job) => void }) {
+function JobCard({ job, appCount, onEdit, onDelete, onDuplicate, onReviewCandidates }: {
+  job: Job;
+  appCount: number;
+  onEdit: (j: Job) => void;
+  onDelete: (id: string) => void;
+  onDuplicate: (j: Job) => void;
+  onReviewCandidates?: (jobId: string) => void;
+}) {
   const statusColor = job.status === 'active'
     ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
     : 'bg-gray-700/50 text-gray-400 border border-gray-600/30';
@@ -626,9 +633,9 @@ function JobCard({ job, appCount, onEdit, onDelete, onDuplicate }: { job: Job; a
             return <span className="flex items-center gap-1 text-xs text-text-muted"><span className="material-symbols-outlined" style={{fontSize:12}}>event</span>Closes in {daysLeft}d</span>;
           })()}
         </div>
-        <button onClick={() => onEdit(job)}
+        <button onClick={() => onReviewCandidates?.(job.id)}
           className="text-white text-sm font-semibold hover:text-primary transition-colors flex items-center gap-1 group/btn">
-          Edit Posting
+          View Applicants
           <span className="material-symbols-outlined ms-sm group-hover/btn:translate-x-1 transition-transform">arrow_forward</span>
         </button>
       </div>

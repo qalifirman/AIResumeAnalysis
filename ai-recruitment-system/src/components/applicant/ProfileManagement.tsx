@@ -4,7 +4,7 @@ import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from 'react-image-cr
 import 'react-image-crop/dist/ReactCrop.css';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { apiUpdateProfile, apiUploadAvatar, apiGetResumes, apiActivateResume, apiDeleteResume } from '../../api';
+import { apiUpdateProfile, apiUploadAvatar, apiRemoveAvatar, apiGetResumes, apiActivateResume, apiDeleteResume } from '../../api';
 import { ConfirmModal } from '../ui/confirm-modal';
 import type { Resume } from '../../types';
 
@@ -26,7 +26,9 @@ export function ProfileManagement({ onNavigate }: ProfileManagementProps) {
 
   const [saving,           setSaving]          = useState(false);
   const [avatarUploading,  setAvatarUploading] = useState(false);
+  const [avatarRemoving,   setAvatarRemoving]  = useState(false);
   const [avatarPreview,    setAvatarPreview]   = useState<string | null>(user?.avatar_url ?? null);
+  const [avatarActionsOpen, setAvatarActionsOpen] = useState(false);
   const [confirmDeleteId,  setConfirmDeleteId] = useState<string | null>(null);
 
   // Crop modal state
@@ -85,6 +87,7 @@ export function ProfileManagement({ onNavigate }: ProfileManagementProps) {
     const url = URL.createObjectURL(file);
     setCropSrc(url);
     setPendingFile(file);
+    setAvatarActionsOpen(false);
     if (avatarInputRef.current) avatarInputRef.current.value = '';
   };
 
@@ -126,6 +129,24 @@ export function ProfileManagement({ onNavigate }: ProfileManagementProps) {
     }, 'image/jpeg', 0.92);
   };
 
+  const handleRemoveAvatar = async () => {
+    if (!accessToken || !avatarPreview) return;
+    const previousAvatar = avatarPreview;
+    setAvatarRemoving(true);
+    setAvatarActionsOpen(false);
+    setAvatarPreview(null);
+    try {
+      await apiRemoveAvatar(accessToken);
+      await refreshProfile();
+      toast.success('Profile photo removed.');
+    } catch (err: any) {
+      setAvatarPreview(previousAvatar);
+      toast.error(err.message || 'Failed to remove photo.');
+    } finally {
+      setAvatarRemoving(false);
+    }
+  };
+
   const handleActivate = async (id: string) => {
     if (!accessToken) return;
     await apiActivateResume(accessToken, id);
@@ -158,7 +179,46 @@ export function ProfileManagement({ onNavigate }: ProfileManagementProps) {
         onCancel={() => setConfirmDeleteId(null)}
       />
 
-      {/* ── Crop Modal ── */}
+      {/* Avatar actions */}
+      {avatarActionsOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-surface-dark border border-border-dark rounded-2xl p-6 w-full max-w-sm shadow-card">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-white font-bold text-lg">Profile Photo</h3>
+              <button type="button" onClick={() => setAvatarActionsOpen(false)}
+                className="size-8 rounded-lg text-text-muted hover:text-white hover:bg-surface-hover transition-colors">
+                <span className="material-symbols-outlined ms-sm">close</span>
+              </button>
+            </div>
+            <div className="flex justify-center mb-5">
+              {avatarPreview ? (
+                <img src={avatarPreview} alt="Profile" className="size-28 rounded-full object-cover border-4 border-surface-card shadow-lg" />
+              ) : (
+                <div className="size-28 rounded-full bg-primary/20 border-4 border-surface-card flex items-center justify-center text-3xl font-black text-primary shadow-lg">
+                  {initials}
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col gap-2">
+              <button type="button" onClick={() => { setAvatarActionsOpen(false); avatarInputRef.current?.click(); }} disabled={avatarUploading || avatarRemoving}
+                className="h-11 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined ms-sm">photo_camera</span>
+                {avatarPreview ? 'Change Photo' : 'Upload Photo'}
+              </button>
+              {avatarPreview && (
+                <button type="button" onClick={handleRemoveAvatar} disabled={avatarUploading || avatarRemoving}
+                  className="h-11 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/15 text-red-400 text-sm font-semibold transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+                  <span className={`material-symbols-outlined ms-sm ${avatarRemoving ? 'animate-spin' : ''}`}>
+                    {avatarRemoving ? 'refresh' : 'delete'}
+                  </span>
+                  Remove Photo
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {cropSrc && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-surface-dark border border-border-dark rounded-2xl p-6 w-full max-w-md shadow-card">
@@ -191,32 +251,34 @@ export function ProfileManagement({ onNavigate }: ProfileManagementProps) {
         <div className="relative flex flex-col md:flex-row gap-5 items-start md:items-end p-6 pt-10">
           {/* Avatar */}
           <div className="relative flex-shrink-0">
-            {avatarPreview ? (
-              <img
-                src={avatarPreview}
-                alt="Profile"
-                className="size-28 rounded-full object-cover border-4 border-surface-card shadow-lg"
-              />
-            ) : (
-              <div className="size-28 rounded-full bg-primary/20 border-4 border-surface-card flex items-center justify-center text-3xl font-black text-primary shadow-lg">
-                {initials}
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => setAvatarActionsOpen(true)}
+              disabled={avatarUploading || avatarRemoving}
+              className="group relative block rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-surface-card disabled:opacity-70"
+              title="Edit profile photo"
+            >
+              {avatarPreview ? (
+                <img
+                  src={avatarPreview}
+                  alt="Profile"
+                  className="size-28 rounded-full object-cover border-4 border-surface-card shadow-lg"
+                />
+              ) : (
+                <div className="size-28 rounded-full bg-primary/20 border-4 border-surface-card flex items-center justify-center text-3xl font-black text-primary shadow-lg">
+                  {initials}
+                </div>
+              )}
+              <span className="absolute inset-0 rounded-full bg-black/0 group-hover:bg-black/35 transition-colors flex items-center justify-center">
+                <span className="material-symbols-outlined text-white opacity-0 group-hover:opacity-100 transition-opacity">edit</span>
+              </span>
+            </button>
             {/* Upload spinner overlay */}
-            {avatarUploading && (
+            {(avatarUploading || avatarRemoving) && (
               <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center">
                 <span className="material-symbols-outlined text-white text-[28px] animate-spin">refresh</span>
               </div>
             )}
-            <button
-              type="button"
-              onClick={() => avatarInputRef.current?.click()}
-              disabled={avatarUploading}
-              className="absolute bottom-1 right-1 size-8 rounded-full bg-primary hover:bg-primary-hover flex items-center justify-center text-white shadow-md transition-colors disabled:opacity-60"
-              title="Change profile photo"
-            >
-              <span className="material-symbols-outlined text-[18px]">photo_camera</span>
-            </button>
             <input
               ref={avatarInputRef}
               type="file"

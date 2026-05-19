@@ -16,6 +16,19 @@ type ApplicantTab = 'dashboard' | 'jobs' | 'applications' | 'practice' | 'resume
 
 type JobWithScore = Job & { matchScore: number; missingSkills: string[] };
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += limit) {
+    const batch = items.slice(i, i + limit);
+    results.push(...await Promise.all(batch.map(mapper)));
+  }
+  return results;
+}
+
 function CompanyLogo({ logo, name }: { logo?: string | null; name?: string | null }) {
   const initial = (name?.[0] || 'C').toUpperCase();
   if (logo) {
@@ -130,15 +143,16 @@ function ApplicantOverview({ onNavigate }: { onNavigate: (tab: ApplicantTab) => 
       const activeResume = resumeList.find(r => r.is_active) ?? resumeList[0] ?? null;
       const appliedIds   = new Set(appList.map(a => a.job_id));
 
-      const matched: JobWithScore[] = await Promise.all(jobList
-        .filter(j => j.status === 'active' && !appliedIds.has(j.id))
-        .map(async j => {
+      const scorableJobs = jobList.filter(j => j.status === 'active' && !appliedIds.has(j.id));
+      const matched: JobWithScore[] = await mapWithConcurrency(scorableJobs, 4, async j => {
           if (!activeResume?.parsed_data) return { ...j, matchScore: 0, missingSkills: [] };
           const cached = readScoreCache(activeResume, j);
           if (cached) return { ...j, matchScore: cached.match_score, missingSkills: cached.missing_skills };
 
           try {
             const result = await apiScoreJobMatch(accessToken, {
+              jobId: j.id,
+              resumeId: activeResume.id,
               jobTitle: j.title || '',
               resumeText: activeResume.parsed_data.rawText || '',
               jobDescription: j.description || '',
@@ -152,7 +166,7 @@ function ApplicantOverview({ onNavigate }: { onNavigate: (tab: ApplicantTab) => 
           } catch {
             return { ...j, matchScore: 0, missingSkills: j.requirements || [] };
           }
-        }));
+        });
 
       const topMatched = matched
         .sort((a, b) => b.matchScore - a.matchScore)

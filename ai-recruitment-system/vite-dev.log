@@ -1,9 +1,29 @@
 
 > ai-recruitment-system@1.0.0 dev
-> vite --host 127.0.0.1 --port 5174
+> vite --host 127.0.0.1 --port 5173
 
-[2m8:25:54 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m Re-optimizing dependencies because lockfile has changed
+Port 5173 is in use, trying another one...
 
-  [32m[1mVITE[22m v7.3.2[39m  [2mready in [0m[1m401[22m[2m[0m ms[22m
+  [32m[1mVITE[22m v7.3.2[39m  [2mready in [0m[1m351[22m[2m[0m ms[22m
 
   [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5174[22m/[39m
+[2m8:46:50 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/hr/HRDashboard.tsx, /src/styles/globals.css[22m
+[2m8:55:51 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/contexts/AuthContext.tsx, /src/components/hr/HRDashboard.tsx, /src/components/applicant/ApplicantDashboard.tsx, /src/components/hr/Analytics.tsx, /src/components/applicant/InterviewPractice.tsx, /src/components/hr/CompanyProfile.tsx, /src/components/hr/ReportGeneration.tsx, /src/components/applicant/ApplicationTracking.tsx, /src/components/layout/NotificationDropdown.tsx, /src/components/applicant/ResumeManager.tsx, /src/components/applicant/ProfileManagement.tsx, /src/components/hr/JobManagement.tsx, /src/components/applicant/JobRecommendations.tsx, /src/components/hr/CandidateReview.tsx[22m
+[2m8:57:02 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/applicant/ProfileManagement.tsx[22m
+[2m8:57:17 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/hr/CompanyProfile.tsx[22m
+[2m9:08:55 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/applicant/ProfileManagement.tsx[22m
+[2m9:09:28 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/applicant/ProfileManagement.tsx[22m
+[2m9:09:48 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/applicant/ProfileManagement.tsx[22m
+[2m9:09:55 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/hr/CompanyProfile.tsx[22m
+[2m9:10:10 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/hr/CompanyProfile.tsx[22m
+[2m9:10:28 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/hr/CompanyProfile.tsx[22m
+[2m9:11:19 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/applicant/ProfileManagement.tsx[22m
+[2m9:11:23 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/hr/CompanyProfile.tsx[22m
+[2m12:50:20 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/contexts/AuthContext.tsx, /src/components/hr/HRDashboard.tsx, /src/components/applicant/ApplicantDashboard.tsx, /src/components/hr/Analytics.tsx, /src/components/applicant/InterviewPractice.tsx, /src/components/hr/CompanyProfile.tsx, /src/components/hr/ReportGeneration.tsx, /src/components/applicant/ApplicationTracking.tsx, /src/components/layout/NotificationDropdown.tsx, /src/components/applicant/ResumeManager.tsx, /src/components/applicant/ProfileManagement.tsx, /src/components/hr/JobManagement.tsx, /src/components/applicant/JobRecommendations.tsx, /src/components/hr/CandidateReview.tsx[22m
+[2m12:50:26 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/applicant/JobRecommendations.tsx[22m
+[2m12:50:31 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/auth/LoginPage.tsx, /src/styles/globals.css[22m
+[2m12:51:30 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/contexts/AuthContext.tsx, /src/components/hr/HRDashboard.tsx, /src/components/applicant/ApplicantDashboard.tsx, /src/components/hr/Analytics.tsx, /src/components/applicant/InterviewPractice.tsx, /src/components/hr/CompanyProfile.tsx, /src/components/hr/ReportGeneration.tsx, /src/components/applicant/ApplicationTracking.tsx, /src/components/layout/NotificationDropdown.tsx, /src/components/applicant/ResumeManager.tsx, /src/components/applicant/ProfileManagement.tsx, /src/components/hr/JobManagement.tsx, /src/components/applicant/JobRecommendations.tsx, /src/components/hr/CandidateReview.tsx[22m
+[2m12:51:37 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/applicant/JobRecommendations.tsx[22m
+[2m12:51:42 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/applicant/ApplicantDashboard.tsx, /src/styles/globals.css[22m
+[2m12:52:10 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/globals.css, /src/components/applicant/JobRecommendations.tsx[22m
+[2m12:52:21 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/applicant/ApplicantDashboard.tsx, /src/styles/globals.css[22m

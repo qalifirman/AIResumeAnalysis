@@ -165,16 +165,19 @@ function KanbanColumn({ col, colApps, blindMode, isStale, onSelect }: {
 interface CandidateReviewProps {
   /** Search string forwarded from the header search bar */
   externalSearch?: string;
+  /** Job selected from Job Management. Candidates are only shown after a job is selected. */
+  selectedJobId?: string | null;
+  onSelectedJobChange?: (jobId: string | null) => void;
 }
 
 type CandidateSortMode = 'date_match' | 'match' | 'newest';
 
-export function CandidateReview({ externalSearch = '' }: CandidateReviewProps) {
+export function CandidateReview({ externalSearch = '', selectedJobId = null, onSelectedJobChange }: CandidateReviewProps) {
   const { accessToken } = useAuth();
   const [apps, setApps] = useState<Application[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [jobFilter, setJobFilter] = useState('all');
+  const [jobFilter, setJobFilter] = useState(selectedJobId || '');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortMode, setSortMode] = useState<CandidateSortMode>('date_match');
   const [internalSearch, setInternalSearch] = useState('');
@@ -188,6 +191,7 @@ export function CandidateReview({ externalSearch = '' }: CandidateReviewProps) {
   const [noteText, setNoteText] = useState('');
   const [notesSaved, setNotesSaved] = useState<Record<string, string>>({});
   const [interviewDates, setInterviewDates] = useState<Record<string, string>>({});
+  const [appCounts, setAppCounts] = useState<Record<string, number>>({});
   const [schedulingInterview, setSchedulingInterview] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
 
@@ -197,18 +201,39 @@ export function CandidateReview({ externalSearch = '' }: CandidateReviewProps) {
   // Load saved note when selected candidate changes
   useEffect(() => { setNoteText(notesSaved[selected?.id ?? ''] ?? ''); }, [selected?.id]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    setJobFilter(selectedJobId || '');
+  }, [selectedJobId]);
+
+  useEffect(() => { load(); }, [accessToken, jobFilter]);
 
   const load = async () => {
     if (!accessToken) return;
+    setLoading(true);
     try {
-      const [j, a] = await Promise.all([apiGetJobs(accessToken), apiGetApplications(accessToken)]);
+      const [j, allApplications, selectedApplications] = await Promise.all([
+        apiGetJobs(accessToken),
+        apiGetApplications(accessToken),
+        jobFilter ? apiGetApplications(accessToken, { jobId: jobFilter }) : Promise.resolve([] as Application[]),
+      ]);
+      const counts: Record<string, number> = {};
+      allApplications.forEach(app => { counts[app.job_id] = (counts[app.job_id] || 0) + 1; });
       setJobs(j);
-      setApps(a.sort((x, y) => y.match_score - x.match_score));
-      setNotesSaved(Object.fromEntries(a.map(app => [app.id, app.private_note || ''])));
-      setInterviewDates(Object.fromEntries(a.filter(app => app.interview_at).map(app => [app.id, app.interview_at as string])));
+      setAppCounts(counts);
+      setApps(selectedApplications.sort((x, y) => y.match_score - x.match_score));
+      setNotesSaved(Object.fromEntries(selectedApplications.map(app => [app.id, app.private_note || ''])));
+      setInterviewDates(Object.fromEntries(selectedApplications.filter(app => app.interview_at).map(app => [app.id, app.interview_at as string])));
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
+  };
+
+  const chooseJob = (jobId: string | null) => {
+    const nextJobId = jobId || '';
+    setJobFilter(nextJobId);
+    onSelectedJobChange?.(nextJobId || null);
+    setSelected(null);
+    setSelectedIds(new Set());
+    setStatusFilter('all');
   };
 
   const updateStatus = async (id: string, status: ApplicationStatus) => {
@@ -292,8 +317,9 @@ export function CandidateReview({ externalSearch = '' }: CandidateReviewProps) {
   };
 
   const search = internalSearch.toLowerCase();
+  const selectedJob = jobs.find(job => job.id === jobFilter) || null;
   const filtered = apps.filter(a => {
-    if (jobFilter !== 'all' && a.job_id !== jobFilter) return false;
+    if (jobFilter && a.job_id !== jobFilter) return false;
     if (statusFilter !== 'all' && a.status !== statusFilter) return false;
     if (search && !(a.applicant_name || '').toLowerCase().includes(search) &&
         !(a.applicant_email || '').toLowerCase().includes(search) &&
@@ -311,6 +337,64 @@ export function CandidateReview({ externalSearch = '' }: CandidateReviewProps) {
   });
 
   if (loading) return <LoadingSkeleton />;
+
+  if (!jobFilter) {
+    return (
+      <div className="max-w-7xl mx-auto w-full">
+        <div className="mb-6">
+          <h2 className="page-title">Choose a Job</h2>
+          <p className="page-subtitle">Select one job posting to review only the candidates who applied for that role.</p>
+        </div>
+
+        {jobs.length === 0 ? (
+          <div className="card-dark p-10 text-center">
+            <div className="size-16 rounded-2xl bg-surface-hover flex items-center justify-center mx-auto mb-4">
+              <span className="material-symbols-outlined ms-lg text-text-muted">work</span>
+            </div>
+            <h3 className="font-bold text-white mb-1">No job postings yet</h3>
+            <p className="text-sm text-text-muted">Create a job posting first, then applicants for that job will appear here.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {jobs.map(job => {
+              const count = appCounts[job.id] || 0;
+              return (
+                <button
+                  key={job.id}
+                  onClick={() => chooseJob(job.id)}
+                  className="bg-surface-card border border-border-dark hover:border-primary/50 hover:bg-surface-hover rounded-xl p-5 text-left transition-all group"
+                >
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-white truncate group-hover:text-primary transition-colors">{job.title}</h3>
+                      <p className="text-sm text-text-muted mt-1 truncate">{job.company_name || job.department}</p>
+                    </div>
+                    <span className={`px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-wide ${
+                      job.status === 'active'
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                        : 'bg-gray-700/50 text-gray-400 border border-gray-600/30'
+                    }`}>
+                      {job.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pt-4 border-t border-border-dark">
+                    <span className="flex items-center gap-2 text-sm text-text-muted">
+                      <span className="material-symbols-outlined ms-sm">group</span>
+                      {count} applicant{count !== 1 ? 's' : ''}
+                    </span>
+                    <span className="flex items-center gap-1 text-sm font-semibold text-primary">
+                      Review
+                      <span className="material-symbols-outlined ms-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (viewMode === 'kanban') {
     const columns: { status: ApplicationStatus; label: string; color: string; bg: string }[] = [
@@ -342,17 +426,23 @@ export function CandidateReview({ externalSearch = '' }: CandidateReviewProps) {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="page-title">Pipeline Board</h2>
-            <p className="page-subtitle">{apps.length} total candidates · drag cards to change status</p>
+            <p className="page-subtitle">{selectedJob?.title || 'Selected job'} · {filtered.length} candidate{filtered.length !== 1 ? 's' : ''} · drag cards to change status</p>
           </div>
-          <button onClick={() => setViewMode('list')} aria-label="Switch to list view"
-            className="flex items-center gap-2 px-4 py-2 bg-surface-card border border-border-dark rounded-xl text-sm text-white hover:bg-surface-hover transition-colors">
-            <span className="material-symbols-outlined ms-sm">list</span>List View
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => chooseJob(null)} aria-label="Choose another job"
+              className="flex items-center gap-2 px-4 py-2 bg-surface-card border border-border-dark rounded-xl text-sm text-white hover:bg-surface-hover transition-colors">
+              <span className="material-symbols-outlined ms-sm">work</span>Jobs
+            </button>
+            <button onClick={() => setViewMode('list')} aria-label="Switch to list view"
+              className="flex items-center gap-2 px-4 py-2 bg-surface-card border border-border-dark rounded-xl text-sm text-white hover:bg-surface-hover transition-colors">
+              <span className="material-symbols-outlined ms-sm">list</span>List View
+            </button>
+          </div>
         </div>
         <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
             {columns.map(col => {
-              const colApps = apps.filter(a => a.status === col.status);
+              const colApps = filtered.filter(a => a.status === col.status);
               return (
                 <KanbanColumn key={col.status} col={col} colApps={colApps} blindMode={blindMode}
                   isStale={isStale} onSelect={app => { setViewMode('list'); setSelected(app); }} />
@@ -372,9 +462,13 @@ export function CandidateReview({ externalSearch = '' }: CandidateReviewProps) {
         <div className="flex items-center justify-between flex-shrink-0">
           <div>
             <h2 className="text-lg font-bold text-white">Candidate Ranking</h2>
-            <p className="text-xs text-text-muted">{filtered.length} candidate{filtered.length !== 1 ? 's' : ''}</p>
+            <p className="text-xs text-text-muted truncate max-w-[220px]">{selectedJob?.title || 'Selected job'} · {filtered.length} candidate{filtered.length !== 1 ? 's' : ''}</p>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => chooseJob(null)} title="Choose another job" aria-label="Choose another job"
+              className="size-8 flex items-center justify-center rounded-lg text-text-muted hover:bg-surface-hover hover:text-white transition-colors">
+              <span className="material-symbols-outlined ms-sm">work</span>
+            </button>
             <button onClick={exportCSV} title="Export to CSV" aria-label="Export candidates to CSV"
               className="size-8 flex items-center justify-center rounded-lg text-text-muted hover:bg-surface-hover hover:text-white transition-colors">
               <span className="material-symbols-outlined ms-sm">download</span>
@@ -414,8 +508,7 @@ export function CandidateReview({ externalSearch = '' }: CandidateReviewProps) {
 
         {/* Filters */}
         <div className="flex gap-2 flex-shrink-0">
-          <select className="input-dark flex-1 text-xs py-2" value={jobFilter} onChange={e => setJobFilter(e.target.value)}>
-            <option value="all">All Jobs</option>
+          <select className="input-dark flex-1 text-xs py-2" value={jobFilter} onChange={e => chooseJob(e.target.value)}>
             {jobs.map(j => <option key={j.id} value={j.id}>{j.title}</option>)}
           </select>
           <select className="input-dark flex-1 text-xs py-2" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>

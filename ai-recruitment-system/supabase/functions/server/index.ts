@@ -157,6 +157,55 @@ function checkRateLimit(userId: string, action: string, maxPerMinute: number): b
 }
 
 const VALID_APPLICATION_STATUSES = new Set(['applied', 'under_review', 'shortlisted', 'rejected']);
+const MAX_TEXT_INPUT = 20_000;
+
+function cleanOptionalText(value: unknown, max = 500): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw new Error('Invalid text field.');
+  const trimmed = value.trim();
+  if (trimmed.length > max) throw new Error(`Text field must be ${max} characters or less.`);
+  return trimmed || null;
+}
+
+function cleanRequiredText(value: unknown, field: string, max = 120): string {
+  if (typeof value !== 'string') throw new Error(`${field} is required.`);
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error(`${field} is required.`);
+  if (trimmed.length > max) throw new Error(`${field} must be ${max} characters or less.`);
+  return trimmed;
+}
+
+function cleanOptionalUrl(value: unknown, field: string): string | null {
+  const text = cleanOptionalText(value, 300);
+  if (!text) return null;
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error(`${field} must be a valid URL.`);
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error(`${field} must start with http:// or https://.`);
+  return url.toString();
+}
+
+function isOwnedStoragePath(path: unknown, userId: string): path is string {
+  return typeof path === 'string'
+    && path.startsWith(`${userId}/`)
+    && !path.includes('..')
+    && /^[0-9a-f-]{36}\/[^/\\]+$/i.test(path);
+}
+
+async function storageObjectExists(path: string): Promise<boolean> {
+  const slash = path.lastIndexOf('/');
+  const folder = path.slice(0, slash);
+  const name = path.slice(slash + 1);
+  const { data, error } = await supabase.storage.from(BUCKET).list(folder, { search: name, limit: 1 });
+  if (error) {
+    console.error('[storage exists] failed:', error.message);
+    return false;
+  }
+  return !!data?.some((item: any) => item.name === name);
+}
 
 async function createResumeSignedUrl(path?: string | null): Promise<string | null> {
   if (!path) return null;
@@ -675,6 +724,10 @@ app.post('/signup', async (c) => {
     const { email, password, name, role, inviteCode } = await c.req.json();
     if (!email || !password || !name || !role) return c.json({ error: 'Missing fields' }, 400);
     if (!['hr', 'applicant'].includes(role)) return c.json({ error: 'Invalid role' }, 400);
+    if (typeof password !== 'string' || password.length < 8 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
+      return c.json({ error: 'Password must be at least 8 characters and include uppercase, lowercase, and a number.' }, 400);
+    }
+    const safeName = cleanRequiredText(name, role === 'hr' ? 'Company name' : 'Name', 120);
     const signupKey = String(email).toLowerCase();
     if (!checkRateLimit(signupKey, 'signup', 3)) return c.json({ error: 'Too many signup attempts. Please try again later.' }, 429);
     if (role === 'hr' && (!HR_SIGNUP_INVITE_CODE || inviteCode !== HR_SIGNUP_INVITE_CODE)) {
@@ -686,20 +739,22 @@ app.post('/signup', async (c) => {
     const { data, error } = await authClient.auth.signUp({
       email,
       password,
-      options: { data: { name, role } },
+      options: { data: { name: safeName, role } },
     });
     if (error) return c.json({ error: error.message }, 400);
     if (!data.user?.id) return c.json({ error: 'Signup did not return a user.' }, 500);
     const { error: pe } = await supabase.from('profiles').insert({
       id: data.user.id,
       email,
-      name,
+      name: safeName,
       role,
-      company_name: role === 'hr' ? name : null,
+      company_name: role === 'hr' ? safeName : null,
     });
     if (pe) return c.json({ error: 'Profile creation failed' }, 500);
-    return c.json({ user: { id: data.user.id, email, name, role }, verificationRequired: !data.session });
-  } catch { return c.json({ error: 'Signup failed' }, 500); }
+    return c.json({ user: { id: data.user.id, email, name: safeName, role }, verificationRequired: !data.session });
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Signup failed' }, e?.message ? 400 : 500);
+  }
 });
 
 app.get('/user/profile', async (c) => {
@@ -755,25 +810,29 @@ app.post('/email/test', async (c) => {
 app.put('/user/profile', async (c) => {
   const user = await verifyAuth(c.req.raw);
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
-  const {
-    name, phone, location, headline, bio, linkedin,
-    company_name, company_industry, company_size, company_website, company_description,
-  } = await c.req.json();
+  const role = await verifyRole(user.id);
+  let safeFields: Record<string, any>;
+  try {
+    const body = await c.req.json();
+    safeFields = {
+      name: cleanRequiredText(body.name, 'Name', 120),
+      phone: cleanOptionalText(body.phone, 40),
+      location: cleanOptionalText(body.location, 120),
+      headline: cleanOptionalText(body.headline, 160),
+      bio: cleanOptionalText(body.bio, 1200),
+      linkedin: cleanOptionalUrl(body.linkedin, 'LinkedIn URL'),
+      company_name: role === 'hr' ? cleanOptionalText(body.company_name, 120) : null,
+      company_industry: role === 'hr' ? cleanOptionalText(body.company_industry, 120) : null,
+      company_size: role === 'hr' ? cleanOptionalText(body.company_size, 60) : null,
+      company_website: role === 'hr' ? cleanOptionalUrl(body.company_website, 'Company website') : null,
+      company_description: role === 'hr' ? cleanOptionalText(body.company_description, 1200) : null,
+    };
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Invalid profile fields.' }, 400);
+  }
   // Write all fields to profiles table so HR can query them directly
   const { data, error } = await supabase.from('profiles')
-    .update({
-      name,
-      phone: phone ?? null,
-      location: location ?? null,
-      headline: headline ?? null,
-      bio: bio ?? null,
-      linkedin: linkedin ?? null,
-      company_name: company_name ?? null,
-      company_industry: company_industry ?? null,
-      company_size: company_size ?? null,
-      company_website: company_website ?? null,
-      company_description: company_description ?? null,
-    })
+    .update(safeFields)
     .eq('id', user.id).select().single();
   if (error) return c.json({ error: 'Update failed' }, 500);
   // Also keep user_metadata in sync (for backwards compat + auth token claims)
@@ -782,8 +841,7 @@ app.put('/user/profile', async (c) => {
   await supabase.auth.admin.updateUserById(user.id, {
     user_metadata: {
       ...existingMeta,
-      name, phone, location, headline, bio, linkedin,
-      company_name, company_industry, company_size, company_website, company_description,
+      ...safeFields,
     },
   });
   return c.json({ profile: {
@@ -830,6 +888,29 @@ app.post('/user/avatar', async (c) => {
     user_metadata: { ...existingMeta, avatar_url: publicUrl },
   });
   return c.json({ avatar_url: publicUrl });
+});
+
+app.delete('/user/avatar', async (c) => {
+  const user = await verifyAuth(c.req.raw);
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+  const { error: profileErr } = await supabase
+    .from('profiles')
+    .update({ avatar_url: null })
+    .eq('id', user.id);
+  if (profileErr) return c.json({ error: 'Failed to remove profile photo' }, 500);
+
+  const { data: authUser } = await supabase.auth.admin.getUserById(user.id);
+  const existingMeta = authUser?.user?.user_metadata ?? {};
+  await supabase.auth.admin.updateUserById(user.id, {
+    user_metadata: { ...existingMeta, avatar_url: null },
+  });
+
+  await supabase.storage
+    .from(AVATAR_BUCKET)
+    .remove(['jpg', 'jpeg', 'png', 'webp', 'gif'].map(ext => `${user.id}.${ext}`));
+
+  return c.json({ success: true });
 });
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
@@ -905,10 +986,26 @@ app.put('/jobs/:id', async (c) => {
 app.get('/jobs/:id/rank', async (c) => {
   const user = await verifyAuth(c.req.raw);
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
-  const score = parseFloat(c.req.query('score') || '0');
-  const { count: total } = await supabase.from('applications').select('id', { count: 'exact', head: true }).eq('job_id', c.req.param('id'));
+  const jobId = c.req.param('id');
+  const role = await verifyRole(user.id);
+  if (role === 'hr') {
+    const { data: ownedJob } = await supabase.from('jobs').select('id').eq('id', jobId).eq('hr_id', user.id).maybeSingle();
+    if (!ownedJob) return c.json({ error: 'Forbidden' }, 403);
+  } else if (role === 'applicant') {
+    const { data: ownApplication } = await supabase.from('applications')
+      .select('id')
+      .eq('job_id', jobId)
+      .eq('applicant_id', user.id)
+      .maybeSingle();
+    if (!ownApplication) return c.json({ error: 'Rank is available after you apply to this job.' }, 403);
+  } else {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+  const rawScore = parseFloat(c.req.query('score') || '0');
+  const score = Number.isFinite(rawScore) ? Math.max(0, Math.min(1, rawScore)) : 0;
+  const { count: total } = await supabase.from('applications').select('id', { count: 'exact', head: true }).eq('job_id', jobId);
   const { count: above } = await supabase.from('applications').select('id', { count: 'exact', head: true })
-    .eq('job_id', c.req.param('id')).gt('match_score', score);
+    .eq('job_id', jobId).gt('match_score', score);
   return c.json({ rank: (above || 0) + 1, total: total || 1 });
 });
 
@@ -959,10 +1056,18 @@ app.post('/resumes', async (c) => {
   const user = await verifyAuth(c.req.raw);
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
   const b = await c.req.json();
+  if (!isOwnedStoragePath(b.filePath, user.id)) return c.json({ error: 'Invalid resume file path.' }, 400);
+  if (!(await storageObjectExists(b.filePath))) return c.json({ error: 'Uploaded resume file was not found.' }, 400);
+  let fileName: string;
+  try {
+    fileName = cleanRequiredText(b.fileName, 'File name', 255);
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Invalid file name.' }, 400);
+  }
   await supabase.from('resumes').update({ is_active: false }).eq('user_id', user.id);
   const { data, error } = await supabase.from('resumes').insert({
-    user_id: user.id, file_name: b.fileName, file_path: b.filePath,
-    file_url: b.fileUrl, parsed_data: b.parsedData, is_active: true,
+    user_id: user.id, file_name: fileName, file_path: b.filePath,
+    file_url: null, parsed_data: b.parsedData, is_active: true,
   }).select().single();
   if (error) return c.json({ error: 'Save failed' }, 500);
   return c.json({ resume: data });
@@ -983,7 +1088,14 @@ app.get('/resumes', async (c) => {
 app.put('/resumes/:id/activate', async (c) => {
   const user = await verifyAuth(c.req.raw);
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
-  await supabase.from('resumes').update({ is_active: false }).eq('user_id', user.id);
+  const { data: target, error: targetError } = await supabase.from('resumes')
+    .select('id')
+    .eq('id', c.req.param('id'))
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (targetError || !target) return c.json({ error: 'Resume not found' }, 404);
+  const { error: deactivateError } = await supabase.from('resumes').update({ is_active: false }).eq('user_id', user.id);
+  if (deactivateError) return c.json({ error: 'Activate failed' }, 500);
   const { error } = await supabase.from('resumes').update({ is_active: true })
     .eq('id', c.req.param('id')).eq('user_id', user.id);
   if (error) return c.json({ error: 'Activate failed' }, 500);
@@ -1092,18 +1204,49 @@ ${rawText.slice(0, 12000)}`;
 app.post('/ai/score-match', async (c) => {
   const user = await verifyAuth(c.req.raw);
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
-  if (!checkRateLimit(user.id, 'ai:score-match', 30)) return c.json({ error: 'Too many AI scoring requests. Please wait a moment.' }, 429);
+  if (await verifyRole(user.id) !== 'applicant') return c.json({ error: 'Forbidden - applicants only' }, 403);
+  if (!checkRateLimit(user.id, 'ai:score-match', 20)) return c.json({ error: 'Too many AI scoring requests. Please wait a moment.' }, 429);
   try {
     const b = await c.req.json();
-    if (!b.resumeText || !b.jobDescription) return c.json({ error: 'resumeText and jobDescription are required' }, 400);
+    if (!b.jobId) return c.json({ error: 'jobId is required.' }, 400);
+    const [{ data: job, error: jobError }, { data: resume, error: resumeError }] = await Promise.all([
+      supabase.from('jobs')
+        .select('id,title,description,requirements,required_years_exp,status,expires_at')
+        .eq('id', b.jobId)
+        .single(),
+      b.resumeId
+        ? supabase.from('resumes')
+          .select('id,parsed_data')
+          .eq('id', b.resumeId)
+          .eq('user_id', user.id)
+          .single()
+        : supabase.from('resumes')
+          .select('id,parsed_data')
+          .eq('user_id', user.id)
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+    ]);
+    if (jobError || !job) return c.json({ error: 'Job not found.' }, 404);
+    if (job.status !== 'active') return c.json({ error: 'This job is not active.' }, 400);
+    if (job.expires_at && new Date(job.expires_at).getTime() < Date.now()) return c.json({ error: 'This job has expired.' }, 400);
+    if (resumeError || !resume?.parsed_data) return c.json({ error: 'Upload and activate a parsed resume before scoring.' }, 400);
+    const parsed = resume.parsed_data || {};
+    const hypotheticalSkills = asStringArray(b.hypotheticalSkills).slice(0, 20);
+    const resumeText = String(parsed.rawText || '').slice(0, MAX_TEXT_INPUT);
+    const jobDescription = String(job.description || '').slice(0, MAX_TEXT_INPUT);
+    if (!resumeText.trim() || !jobDescription.trim()) return c.json({ error: 'Resume and job description text are required.' }, 400);
     const match = await scoreMatch({
-      jobTitle: b.jobTitle || '',
-      resumeText: b.resumeText,
-      jobDescription: b.jobDescription,
-      resumeSkills: b.resumeSkills || [],
-      requiredSkills: b.requiredSkills || [],
-      resumeYearsExp: b.resumeYearsExp || 0,
-      requiredYearsExp: b.requiredYearsExp || 0,
+      jobTitle: job.title || '',
+      resumeText: hypotheticalSkills.length
+        ? `${resumeText}\n\nHypothetical added skills: ${hypotheticalSkills.join(', ')}`
+        : resumeText,
+      jobDescription,
+      resumeSkills: [...new Set([...asStringArray(parsed.skills), ...hypotheticalSkills])],
+      requiredSkills: asStringArray(job.requirements),
+      resumeYearsExp: Number(parsed.yearsOfExperience) || estimateYears(resumeText),
+      requiredYearsExp: job.required_years_exp || 0,
     });
     return c.json({ match });
   } catch (e: any) {
@@ -1229,11 +1372,12 @@ Rules:
 app.post('/applications', async (c) => {
   const user = await verifyAuth(c.req.raw);
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (await verifyRole(user.id) !== 'applicant') return c.json({ error: 'Forbidden - applicants only' }, 403);
   if (!checkRateLimit(user.id, 'apply', 10)) return c.json({ error: 'Too many applications. Please wait a moment before applying again.' }, 429);
   const b = await c.req.json();
   if (!b.jobId) return c.json({ error: 'jobId is required.' }, 400);
 
-  const [{ data: job, error: jobError }, { data: resume, error: resumeError }] = await Promise.all([
+  const [{ data: job, error: jobError }, { data: resume, error: resumeError }, { data: existingApplication }] = await Promise.all([
     supabase.from('jobs')
       .select('id,hr_id,title,description,requirements,required_years_exp,status,expires_at')
       .eq('id', b.jobId)
@@ -1251,9 +1395,15 @@ app.post('/applications', async (c) => {
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
+    supabase.from('applications')
+      .select('id')
+      .eq('job_id', b.jobId)
+      .eq('applicant_id', user.id)
+      .maybeSingle(),
   ]);
 
   if (jobError || !job) return c.json({ error: 'Job not found.' }, 404);
+  if (existingApplication) return c.json({ error: 'You have already applied to this job.' }, 409);
   if (job.status !== 'active') return c.json({ error: 'This job is not accepting applications.' }, 400);
   if (job.expires_at && new Date(job.expires_at).getTime() < Date.now()) {
     return c.json({ error: 'This job has expired and is no longer accepting applications.' }, 400);
@@ -1305,7 +1455,10 @@ app.post('/applications', async (c) => {
     is_fallback: scores.is_fallback,
   }).select().single();
 
-  if (error) return c.json({ error: error.message }, 500);
+  if (error) {
+    if ((error as any).code === '23505') return c.json({ error: 'You have already applied to this job.' }, 409);
+    return c.json({ error: error.message }, 500);
+  }
 
   // Two-way match alert: notify HR if strong applicant (score >= 0.75)
   if (scores.match_score >= 0.75) {
@@ -1339,14 +1492,22 @@ app.get('/applications', async (c) => {
   const user = await verifyAuth(c.req.raw);
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+  const requestedJobId = c.req.query('jobId');
 
   let query = supabase.from('applications').select('*, jobs(*)');
   if (profile?.role === 'applicant') {
     query = query.eq('applicant_id', user.id);
+    if (requestedJobId) query = query.eq('job_id', requestedJobId);
   } else {
     const { data: myJobs } = await supabase.from('jobs').select('id').eq('hr_id', user.id);
     if (!myJobs?.length) return c.json({ applications: [] });
-    query = query.in('job_id', myJobs.map((j: any) => j.id));
+    const myJobIds = myJobs.map((j: any) => j.id);
+    if (requestedJobId) {
+      if (!myJobIds.includes(requestedJobId)) return c.json({ applications: [] });
+      query = query.eq('job_id', requestedJobId);
+    } else {
+      query = query.in('job_id', myJobIds);
+    }
   }
 
   const { data, error } = await query.order('match_score', { ascending: false });
