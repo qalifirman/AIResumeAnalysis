@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { apiGeneratePracticeQuestions, type PracticeQuestionSet } from '../../api';
+import { apiGeneratePracticeQuestions, apiGetResumes, type PracticeQuestionSet } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
 import { fieldIcon } from '../../utils/job-fields';
 
@@ -17,6 +17,15 @@ export function InterviewPractice() {
     silent ? setRefreshing(true) : setLoading(true);
     setError('');
     try {
+      const resumes = await apiGetResumes(accessToken);
+      const hasParsedResume = resumes.some(resume =>
+        resume.is_active && !!resume.parsed_data?.rawText
+      ) || resumes.some(resume => !!resume.parsed_data?.rawText);
+      if (!hasParsedResume) {
+        setPractice(null);
+        setError('Upload and activate a parsed resume first so practice can be tailored to your field.');
+        return;
+      }
       const generated = await apiGeneratePracticeQuestions(accessToken);
       setPractice(generated);
       setAnswers({});

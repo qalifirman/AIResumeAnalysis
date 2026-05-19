@@ -6,8 +6,12 @@ const app = new Hono().basePath('/server');
 const configuredOrigins = [
   Deno.env.get('SITE_URL'),
   ...(Deno.env.get('CORS_ORIGINS') || '').split(','),
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
   'http://localhost:5173',
+  'http://127.0.0.1:5173',
   'http://localhost:5174',
+  'http://127.0.0.1:5174',
 ].map(origin => origin?.trim()).filter(Boolean) as string[];
 
 app.use('*', cors({
@@ -722,36 +726,49 @@ ${payload.resumeText.slice(0, 12000)}`;
 app.post('/signup', async (c) => {
   try {
     const { email, password, name, role, inviteCode } = await c.req.json();
-    if (!email || !password || !name || !role) return c.json({ error: 'Missing fields' }, 400);
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const cleanInviteCode = typeof inviteCode === 'string' ? inviteCode.trim() : '';
+    if (!cleanEmail || !password || !name || !role) return c.json({ error: 'Missing fields' }, 400);
     if (!['hr', 'applicant'].includes(role)) return c.json({ error: 'Invalid role' }, 400);
     if (typeof password !== 'string' || password.length < 8 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
       return c.json({ error: 'Password must be at least 8 characters and include uppercase, lowercase, and a number.' }, 400);
     }
     const safeName = cleanRequiredText(name, role === 'hr' ? 'Company name' : 'Name', 120);
-    const signupKey = String(email).toLowerCase();
-    if (!checkRateLimit(signupKey, 'signup', 3)) return c.json({ error: 'Too many signup attempts. Please try again later.' }, 429);
-    if (role === 'hr' && (!HR_SIGNUP_INVITE_CODE || inviteCode !== HR_SIGNUP_INVITE_CODE)) {
+    if (!checkRateLimit(cleanEmail, 'signup', 3)) return c.json({ error: 'Too many signup attempts. Please try again later.' }, 429);
+    if (role === 'hr' && (!HR_SIGNUP_INVITE_CODE || cleanInviteCode !== HR_SIGNUP_INVITE_CODE)) {
       return c.json({ error: 'HR signup requires an administrator invite code.' }, 403);
     }
-    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    const { data, error } = await authClient.auth.signUp({
-      email,
+    const { data: adminData, error: adminError } = await supabase.auth.admin.createUser({
+      email: cleanEmail,
       password,
-      options: { data: { name: safeName, role } },
+      email_confirm: true,
+      user_metadata: { name: safeName, role },
     });
-    if (error) return c.json({ error: error.message }, 400);
-    if (!data.user?.id) return c.json({ error: 'Signup did not return a user.' }, 500);
+    if (adminError || !adminData.user?.id) {
+      const message = adminError?.message || 'Signup could not create an account.';
+      const friendly = /already|duplicate|registered|exists/i.test(message)
+        ? 'This email may already be registered. Please sign in, reset your password, or use a different email.'
+        : message;
+      return c.json({ error: friendly }, /already|duplicate|registered|exists/i.test(message) ? 409 : 400);
+    }
+
+    const userId = adminData.user.id;
+
     const { error: pe } = await supabase.from('profiles').insert({
-      id: data.user.id,
-      email,
+      id: userId,
+      email: cleanEmail,
       name: safeName,
       role,
       company_name: role === 'hr' ? safeName : null,
     });
-    if (pe) return c.json({ error: 'Profile creation failed' }, 500);
-    return c.json({ user: { id: data.user.id, email, name: safeName, role }, verificationRequired: !data.session });
+    if (pe) {
+      if ((pe as any).code === '23505') {
+        return c.json({ error: 'An account profile already exists for this email. Please sign in instead.' }, 409);
+      }
+      console.error('[signup] profile creation failed:', pe.message);
+      return c.json({ error: 'Profile creation failed. Please contact an administrator.' }, 500);
+    }
+    return c.json({ user: { id: userId, email: cleanEmail, name: safeName, role }, verificationRequired: false });
   } catch (e: any) {
     return c.json({ error: e?.message || 'Signup failed' }, e?.message ? 400 : 500);
   }
