@@ -189,9 +189,7 @@ function HROverview({ onNavigate, onOpenCandidates }: {
         {stats.map(s => (
           <div key={s.label} className="stat-card">
             <div className="flex justify-between items-start mb-4">
-              <div className={`p-2 ${s.bg} rounded-lg`}>
-                <span className={`material-symbols-outlined ${s.color}`}>{s.icon}</span>
-              </div>
+              <span className={`material-symbols-outlined ${s.color}`}>{s.icon}</span>
             </div>
             <p className="text-sm font-medium text-text-muted">{s.label}</p>
             <h3 className="text-2xl font-bold text-white mt-1">{s.value}</h3>

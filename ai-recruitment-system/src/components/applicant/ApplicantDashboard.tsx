@@ -279,9 +279,7 @@ function ApplicantOverview({ onNavigate }: { onNavigate: (tab: ApplicantTab) => 
         {stats.map(s => (
           <div key={s.label} className="stat-card">
             <div className="flex justify-between items-start mb-4">
-              <div className={`p-2 ${s.bg} rounded-lg`}>
-                <span className={`material-symbols-outlined ${s.color}`}>{s.icon}</span>
-              </div>
+              <span className={`material-symbols-outlined ${s.color}`}>{s.icon}</span>
               {s.badge && (
                 <span className={`text-xs font-medium px-2 py-1 rounded ${s.badgeColor}`}>{s.badge}</span>
               )}
