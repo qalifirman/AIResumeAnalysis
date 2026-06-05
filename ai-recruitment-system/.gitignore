@@ -25,3 +25,5 @@ ai-service/.venv/
 # OS
 .DS_Store
 Thumbs.db
+
+.vercel
