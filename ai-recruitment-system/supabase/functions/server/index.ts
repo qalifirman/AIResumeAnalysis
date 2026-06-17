@@ -84,13 +84,35 @@ function emailStatusUpdate(candidateName: string, jobTitle: string, status: stri
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 const BUCKET        = 'recruitai-resumes';
 const AVATAR_BUCKET = 'profile-avatars';
-const ALLOWED_JOB_FIELDS = new Set(['Technology', 'Security', 'Medical']);
+type JobField = 'Technology' | 'Security' | 'Medical';
 
-function isAllowedJobField(value: unknown): value is string {
-  return typeof value === 'string' && ALLOWED_JOB_FIELDS.has(value);
+const ALLOWED_JOB_FIELDS = new Set<JobField>(['Technology', 'Security', 'Medical']);
+
+const FIELD_KEYWORDS: Record<JobField, string[]> = {
+  Technology: [
+    'software engineer', 'software developer', 'developer', 'programmer', 'frontend',
+    'backend', 'full stack', 'web developer', 'javascript', 'typescript', 'python',
+    'java', 'react', 'node.js', 'sql', 'database', 'api', 'cloud', 'devops',
+    'machine learning', 'data science', 'cybersecurity', 'network security',
+  ],
+  Security: [
+    'security officer', 'security guard', 'guard', 'patrol', 'cctv', 'access control',
+    'visitor management', 'crowd control', 'incident reporting', 'loss prevention',
+    'static guarding', 'site security', 'security sop', 'perimeter', 'emergency response',
+    'fire safety', 'radio communication',
+  ],
+  Medical: [
+    'doctor', 'nurse', 'nursing', 'medical', 'patient care', 'patient', 'clinical',
+    'hospital', 'clinic', 'triage', 'surgery', 'medication', 'infection control',
+    'vital signs', 'ward', 'phlebotomy', 'diagnosis', 'treatment',
+  ],
+};
+
+function isAllowedJobField(value: unknown): value is JobField {
+  return typeof value === 'string' && ALLOWED_JOB_FIELDS.has(value as JobField);
 }
 
-function inferJobFieldFromText(job: any): 'Technology' | 'Security' | 'Medical' {
+function inferJobFieldFromText(job: any): JobField {
   if (isAllowedJobField(job?.department)) return job.department;
   const text = `${job?.title || ''} ${job?.department || ''} ${job?.description || ''} ${(job?.requirements || []).join(' ')}`.toLowerCase();
   if (/\b(guard|security|patrol|cctv|access control|visitor|surveillance|mosque|school gate|incident|perimeter)\b/.test(text)) {
@@ -100,6 +122,63 @@ function inferJobFieldFromText(job: any): 'Technology' | 'Security' | 'Medical' 
     return 'Medical';
   }
   return 'Technology';
+}
+
+function phraseInText(text: string, phrase: string): boolean {
+  const escaped = phrase.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`, 'i').test(text);
+}
+
+function inferResumeField(input: { resumeText: string; resumeSkills: string[] }): { field: JobField; confidence: number; scores: Record<JobField, number> } {
+  const text = `${input.resumeText || ''} ${(input.resumeSkills || []).join(' ')}`.toLowerCase();
+  const skills = (input.resumeSkills || []).map(skill => skill.toLowerCase());
+  const scores: Record<JobField, number> = { Technology: 0, Security: 0, Medical: 0 };
+
+  for (const field of Object.keys(FIELD_KEYWORDS) as JobField[]) {
+    for (const keyword of FIELD_KEYWORDS[field]) {
+      const normalized = keyword.toLowerCase();
+      if (skills.some(skill => skill === normalized || skill.includes(normalized) || normalized.includes(skill))) {
+        scores[field] += 3;
+      }
+      if (phraseInText(text, normalized)) {
+        scores[field] += 1;
+      }
+    }
+  }
+
+  const ranked = (Object.keys(scores) as JobField[])
+    .map(field => ({ field, score: scores[field] }))
+    .sort((a, b) => b.score - a.score);
+  const top = ranked[0];
+  const second = ranked[1];
+  const total = ranked.reduce((sum, item) => sum + item.score, 0);
+  const isConfident = top.score >= 4 && top.score >= Math.max(2, second.score * 1.4);
+  const confidence = isConfident ? Math.min(0.95, 0.55 + (top.score / Math.max(total, 1)) * 0.4) : 0.35;
+
+  return { field: top.field, confidence, scores };
+}
+
+function buildFieldMismatchScore(payload: {
+  jobField: JobField;
+  resumeField: JobField;
+  requiredSkills: string[];
+  jobDescription: string;
+}) {
+  const requiredSkills = payload.requiredSkills.length ? payload.requiredSkills : extractFallbackSkills(payload.jobDescription);
+  return {
+    match_score: 0.05,
+    skill_match_score: 0,
+    text_similarity: 0,
+    experience_score: 0,
+    matched_skills: [],
+    missing_skills: requiredSkills,
+    ai_provider: 'field-gate',
+    is_fallback: true,
+    field_match: false,
+    resume_field: payload.resumeField,
+    job_field: payload.jobField,
+    explanation: `Field mismatch: this resume is detected as ${payload.resumeField}, while the job is tagged ${payload.jobField}. The system does not recommend it as a match unless the resume contains clear ${payload.jobField.toLowerCase()} evidence.`,
+  };
 }
 
 async function ensureBuckets() {
@@ -314,6 +393,7 @@ function fallbackParseResume(rawText: string) {
 }
 
 function fallbackScoreMatch(payload: {
+  jobField?: JobField;
   resumeText: string;
   jobDescription: string;
   resumeSkills: string[];
@@ -347,6 +427,9 @@ function fallbackScoreMatch(payload: {
     missing_skills: missing,
     ai_provider: 'rule-based',
     is_fallback: true,
+    field_match: true,
+    resume_field: inferResumeField({ resumeText: payload.resumeText, resumeSkills }).field,
+    job_field: payload.jobField,
     explanation: `Fallback estimate used because all AI providers were unavailable. Matched ${matched.length} of ${requiredSkills.length} required skills with ${resumeYears} year(s) of detected experience.`,
   };
 }
@@ -647,6 +730,7 @@ Respond with ONLY the evaluation text. Be specific about key strengths and skill
 // ── AI scoring (calls Python service if available, falls back to built-in) ────
 
 async function scoreMatch(payload: {
+  jobField?: JobField;
   jobTitle: string;
   resumeText: string;
   jobDescription: string;
@@ -655,6 +739,19 @@ async function scoreMatch(payload: {
   resumeYearsExp: number;
   requiredYearsExp: number;
 }) {
+  const detectedResumeField = inferResumeField({
+    resumeText: payload.resumeText,
+    resumeSkills: payload.resumeSkills,
+  });
+  if (payload.jobField && detectedResumeField.confidence >= 0.6 && detectedResumeField.field !== payload.jobField) {
+    return buildFieldMismatchScore({
+      jobField: payload.jobField,
+      resumeField: detectedResumeField.field,
+      requiredSkills: payload.requiredSkills,
+      jobDescription: payload.jobDescription,
+    });
+  }
+
   const prompt = `You are a recruitment matching AI. Analyze the resume against the job and return ONLY valid JSON with this exact shape:
 {
   "match_score": number,
@@ -671,11 +768,14 @@ Rules:
 - Use semantic understanding, not exact keyword matching.
 - Consider transferable skills and synonyms.
 - Penalize unrelated resumes even if they share generic words.
+- If detected resume field and job field are different, return a very low score and no matched skills.
 - matched_skills should include skills the candidate clearly has for this job.
 - missing_skills should include the most important gaps.
 - explanation must be 2 concise sentences.
 
 Job title: ${payload.jobTitle || 'Unknown role'}
+Job field: ${payload.jobField || 'Unknown'}
+Detected resume field: ${detectedResumeField.field} (${Math.round(detectedResumeField.confidence * 100)}% confidence)
 Required years: ${payload.requiredYearsExp}
 Tagged required skills: ${payload.requiredSkills.join(', ') || 'None'}
 Resume detected skills: ${payload.resumeSkills.join(', ') || 'None'}
@@ -703,6 +803,9 @@ ${payload.resumeText.slice(0, 12000)}`;
       missing_skills: missing,
       ai_provider: aiResult.provider,
       is_fallback: false,
+      field_match: true,
+      resume_field: detectedResumeField.field,
+      job_field: payload.jobField,
       explanation: typeof aiScore.explanation === 'string' && aiScore.explanation.trim()
         ? aiScore.explanation.trim()
         : await generateAIExplanation(
@@ -1228,7 +1331,7 @@ app.post('/ai/score-match', async (c) => {
     if (!b.jobId) return c.json({ error: 'jobId is required.' }, 400);
     const [{ data: job, error: jobError }, { data: resume, error: resumeError }] = await Promise.all([
       supabase.from('jobs')
-        .select('id,title,description,requirements,required_years_exp,status,expires_at')
+        .select('id,title,department,description,requirements,required_years_exp,status,expires_at')
         .eq('id', b.jobId)
         .single(),
       b.resumeId
@@ -1255,6 +1358,7 @@ app.post('/ai/score-match', async (c) => {
     const jobDescription = String(job.description || '').slice(0, MAX_TEXT_INPUT);
     if (!resumeText.trim() || !jobDescription.trim()) return c.json({ error: 'Resume and job description text are required.' }, 400);
     const match = await scoreMatch({
+      jobField: inferJobFieldFromText(job),
       jobTitle: job.title || '',
       resumeText: hypotheticalSkills.length
         ? `${resumeText}\n\nHypothetical added skills: ${hypotheticalSkills.join(', ')}`
@@ -1396,7 +1500,7 @@ app.post('/applications', async (c) => {
 
   const [{ data: job, error: jobError }, { data: resume, error: resumeError }, { data: existingApplication }] = await Promise.all([
     supabase.from('jobs')
-      .select('id,hr_id,title,description,requirements,required_years_exp,status,expires_at')
+      .select('id,hr_id,title,department,description,requirements,required_years_exp,status,expires_at')
       .eq('id', b.jobId)
       .single(),
     b.resumeId
@@ -1439,6 +1543,7 @@ app.post('/applications', async (c) => {
   let scores;
   try {
     scores = await scoreMatch({
+      jobField: inferJobFieldFromText(job),
       jobTitle: job.title || '',
       resumeText,
       jobDescription: job.description || '',

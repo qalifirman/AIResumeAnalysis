@@ -14,7 +14,7 @@ import { readScoreCache, writeScoreCache } from '../../utils/score-cache';
 
 type ApplicantTab = 'dashboard' | 'jobs' | 'applications' | 'practice' | 'resumes' | 'profile';
 
-type JobWithScore = Job & { matchScore: number; missingSkills: string[] };
+type JobWithScore = Job & { matchScore: number; missingSkills: string[]; fieldMatch?: boolean };
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -147,7 +147,7 @@ function ApplicantOverview({ onNavigate }: { onNavigate: (tab: ApplicantTab) => 
       const matched: JobWithScore[] = await mapWithConcurrency(scorableJobs, 4, async j => {
           if (!activeResume?.parsed_data) return { ...j, matchScore: 0, missingSkills: [] };
           const cached = readScoreCache(activeResume, j);
-          if (cached) return { ...j, matchScore: cached.match_score, missingSkills: cached.missing_skills };
+          if (cached) return { ...j, matchScore: cached.match_score, missingSkills: cached.missing_skills, fieldMatch: cached.field_match };
 
           try {
             const result = await apiScoreJobMatch(accessToken, {
@@ -162,13 +162,14 @@ function ApplicantOverview({ onNavigate }: { onNavigate: (tab: ApplicantTab) => 
               requiredYearsExp: j.required_years_exp || 0,
             });
             writeScoreCache(activeResume, j, result);
-            return { ...j, matchScore: result.match_score, missingSkills: result.missing_skills };
+            return { ...j, matchScore: result.match_score, missingSkills: result.missing_skills, fieldMatch: result.field_match };
           } catch {
             return { ...j, matchScore: 0, missingSkills: j.requirements || [] };
           }
         });
 
       const topMatched = matched
+        .filter(j => j.fieldMatch !== false && j.matchScore > 0.05)
         .sort((a, b) => b.matchScore - a.matchScore)
         .slice(0, 2);
 

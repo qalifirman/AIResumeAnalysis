@@ -1,6 +1,7 @@
 import type { Job, Resume } from '../types';
 
 const CACHE_TTL = 24 * 60 * 60 * 1000;
+const CACHE_PREFIX = 'score_v3';
 
 export interface CachedMatchScore {
   match_score: number;
@@ -12,6 +13,9 @@ export interface CachedMatchScore {
   explanation: string;
   ai_provider?: string;
   is_fallback?: boolean;
+  field_match?: boolean;
+  resume_field?: string;
+  job_field?: string;
 }
 
 function hashString(value: string): string {
@@ -38,7 +42,7 @@ function cacheKey(resume: Resume, job: Job) {
     job.required_years_exp || 0,
   ].join('::');
 
-  return `score_v2_${resume.id}_${job.id}_${hashString(fingerprint)}`;
+  return `${CACHE_PREFIX}_${resume.id}_${job.id}_${hashString(fingerprint)}`;
 }
 
 export function readScoreCache(resume: Resume, job: Job): CachedMatchScore | null {

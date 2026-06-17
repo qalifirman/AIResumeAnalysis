@@ -18,6 +18,9 @@ interface JobMatch extends Job {
   explanation: string;
   aiProvider?: string;
   isFallback?: boolean;
+  fieldMatch?: boolean;
+  resumeField?: string;
+  jobField?: string;
 }
 
 interface JobRecommendationsProps {
@@ -137,11 +140,11 @@ export function JobRecommendations({ externalSearch = '' }: JobRecommendationsPr
       const activeJobs = jobList.filter(j => j.status === 'active');
       const matched: JobMatch[] = await mapWithConcurrency(activeJobs, 4, async j => {
         if (!resume?.parsed_data) {
-          return { ...j, matchScore: 0, skillMatch: 0, textSimilarity: 0, matchedSkills: [], missingSkills: [], explanation: 'Upload a resume to see your match score.' };
+          return { ...j, matchScore: 0, skillMatch: 0, textSimilarity: 0, matchedSkills: [], missingSkills: [], explanation: 'Upload a resume to see your match score.', fieldMatch: true };
         }
         const cached = readScoreCache(resume, j);
         if (cached) {
-          return { ...j, matchScore: cached.match_score, skillMatch: cached.skill_match_score, textSimilarity: cached.text_similarity, matchedSkills: cached.matched_skills, missingSkills: cached.missing_skills, explanation: cached.explanation, aiProvider: cached.ai_provider, isFallback: cached.is_fallback };
+          return { ...j, matchScore: cached.match_score, skillMatch: cached.skill_match_score, textSimilarity: cached.text_similarity, matchedSkills: cached.matched_skills, missingSkills: cached.missing_skills, explanation: cached.explanation, aiProvider: cached.ai_provider, isFallback: cached.is_fallback, fieldMatch: cached.field_match, resumeField: cached.resume_field, jobField: cached.job_field };
         }
         try {
           const r = await apiScoreJobMatch(accessToken, {
@@ -156,7 +159,7 @@ export function JobRecommendations({ externalSearch = '' }: JobRecommendationsPr
             requiredYearsExp: j.required_years_exp || 0,
           });
           writeScoreCache(resume, j, r);
-          return { ...j, matchScore: r.match_score, skillMatch: r.skill_match_score, textSimilarity: r.text_similarity, matchedSkills: r.matched_skills, missingSkills: r.missing_skills, explanation: r.explanation, aiProvider: r.ai_provider, isFallback: r.is_fallback };
+          return { ...j, matchScore: r.match_score, skillMatch: r.skill_match_score, textSimilarity: r.text_similarity, matchedSkills: r.matched_skills, missingSkills: r.missing_skills, explanation: r.explanation, aiProvider: r.ai_provider, isFallback: r.is_fallback, fieldMatch: r.field_match, resumeField: r.resume_field, jobField: r.job_field };
         } catch {
           return {
             ...j,

@@ -200,6 +200,9 @@ export async function apiScoreJobMatch(
   explanation: string;
   ai_provider?: string;
   is_fallback?: boolean;
+  field_match?: boolean;
+  resume_field?: string;
+  job_field?: string;
 }> {
   const res = await fetch(`${base}/ai/score-match`, {
     method: 'POST',
