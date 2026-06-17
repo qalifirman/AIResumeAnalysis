@@ -29,7 +29,6 @@ const supabaseAnonKey    = Deno.env.get('SUPABASE_ANON_KEY')!;
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || '';
 const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY') || '';
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || '';
-const ENABLE_CLAUDE_FALLBACK = Deno.env.get('ENABLE_CLAUDE_FALLBACK') === 'true';
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
 const FROM_EMAIL = Deno.env.get('FROM_EMAIL') || 'noreply@jobmatchai.com';
 const HR_SIGNUP_INVITE_CODE = Deno.env.get('HR_SIGNUP_INVITE_CODE') || '';
@@ -303,8 +302,8 @@ async function createResumeSignedUrl(path?: string | null): Promise<string | nul
 // ── AI scoring helpers ────────────────────────────────────────────────────────
 
 function requireLLM(feature: string) {
-  if (!GEMINI_API_KEY && !GROQ_API_KEY && !(ENABLE_CLAUDE_FALLBACK && ANTHROPIC_API_KEY)) {
-    throw new Error(`${feature} requires GEMINI_API_KEY, GROQ_API_KEY, or enabled Claude fallback to be configured.`);
+  if (!ANTHROPIC_API_KEY && !GEMINI_API_KEY && !GROQ_API_KEY) {
+    throw new Error(`${feature} requires ANTHROPIC_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY to be configured.`);
   }
 }
 
@@ -610,6 +609,36 @@ async function generateAIResult(prompt: string, maxTokens = 700, temperature = 0
   requireLLM('Real AI generation');
   const errors: string[] = [];
 
+  if (ANTHROPIC_API_KEY) {
+    try {
+      const res = await fetchWithTimeout(
+        'https://api.anthropic.com/v1/messages',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: maxTokens,
+            temperature,
+            messages: [{ role: 'user', content: prompt }],
+          }),
+        },
+      );
+      if (!res.ok) throw new Error(`Anthropic HTTP ${res.status}`);
+      const data = await res.json();
+      const text = data.content?.[0]?.text?.trim();
+      if (!text) throw new Error('Anthropic returned empty response');
+      return { text, provider: 'claude' };
+    } catch (e: any) {
+      errors.push(`Anthropic: ${e?.message}`);
+      console.warn('[AI] Claude failed, falling back to Gemini:', e?.message);
+    }
+  }
+
   if (GEMINI_API_KEY) {
     try {
       const res = await fetchWithTimeout(
@@ -656,42 +685,7 @@ async function generateAIResult(prompt: string, maxTokens = 700, temperature = 0
       return { text, provider: 'groq' };
     } catch (e: any) {
       errors.push(`Groq: ${e?.message}`);
-      console.warn(
-        ENABLE_CLAUDE_FALLBACK
-          ? '[AI] Groq failed, falling back to Claude:'
-          : '[AI] Groq failed, Claude fallback disabled:',
-        e?.message,
-      );
-    }
-  }
-
-  if (ENABLE_CLAUDE_FALLBACK && ANTHROPIC_API_KEY) {
-    try {
-      const res = await fetchWithTimeout(
-        'https://api.anthropic.com/v1/messages',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: maxTokens,
-            temperature,
-            messages: [{ role: 'user', content: prompt }],
-          }),
-        },
-      );
-      if (!res.ok) throw new Error(`Anthropic HTTP ${res.status}`);
-      const data = await res.json();
-      const text = data.content?.[0]?.text?.trim();
-      if (!text) throw new Error('Anthropic returned empty response');
-      return { text, provider: 'claude' };
-    } catch (e: any) {
-      errors.push(`Anthropic: ${e?.message}`);
-      console.warn('[AI] Anthropic failed:', e?.message);
+      console.warn('[AI] Groq failed:', e?.message);
     }
   }
 
@@ -722,7 +716,7 @@ Candidate Experience: ${yearsExp} year(s) | Required: ${requiredYearsExp} year(s
 
 Respond with ONLY the evaluation text. Be specific about key strengths and skill gaps.`;
 
-  // Current provider order is Gemini first, then Groq, then Claude.
+  // Current provider order is Claude first, then Gemini, then Groq.
   return generateAIText(prompt, 220, 0.4);
 
 }

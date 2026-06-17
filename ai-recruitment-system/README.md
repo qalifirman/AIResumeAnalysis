@@ -131,11 +131,11 @@ Applicant tracks the updated application status
 
 The production scoring path is handled by the Supabase Edge Function. It can use configured AI providers first, then falls back to deterministic rule-based scoring if providers are unavailable.
 
-Supported AI provider secrets:
+Supported AI provider secrets, in runtime priority order:
 
+- `ANTHROPIC_API_KEY`
 - `GEMINI_API_KEY`
 - `GROQ_API_KEY`
-- `ANTHROPIC_API_KEY`
 
 If no provider key is configured, the app still works using fallback scoring.
 
@@ -157,10 +157,9 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 SITE_URL=https://your-deployed-site.example
 CORS_ORIGINS=https://your-deployed-site.example,http://localhost:5173
 HR_SIGNUP_INVITE_CODE=choose-a-private-invite-code
+ANTHROPIC_API_KEY=optional
 GEMINI_API_KEY=optional
 GROQ_API_KEY=optional
-ANTHROPIC_API_KEY=optional
-ENABLE_CLAUDE_FALLBACK=false
 RESEND_API_KEY=optional
 FROM_EMAIL=noreply@your-domain.example
 ```
